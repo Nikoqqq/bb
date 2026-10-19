@@ -156,6 +156,58 @@ describe("PromptDecorationExtension", () => {
     editor.destroy();
   });
 
+  it("paints a mention pill only when a range covers all of it", () => {
+    const editor = createEditor(
+      {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              { type: "text", text: "_see " },
+              {
+                type: "mention",
+                attrs: {
+                  resource: {
+                    kind: "plugin",
+                    pluginId: "sample",
+                    itemId: "files:init",
+                    label: "@src/__init__.py",
+                  },
+                  serializedText: "@src/__init__.py",
+                },
+              },
+            ],
+          },
+        ],
+      },
+      {
+        getDecorationSources: () => [
+          {
+            id: "plugin:partial",
+            generation: 1,
+            effects: [
+              {
+                id: "into-pill",
+                className: "partial-range",
+                match: (text) => [{ from: 0, to: text.indexOf("_init") + 1 }],
+              },
+            ],
+          },
+        ],
+      },
+    );
+
+    const decorations =
+      getPromptDecorationSet(editor.state)?.find(
+        undefined,
+        undefined,
+        (spec) => spec.className === "partial-range",
+      ) ?? [];
+    expect(decorations.map(({ from, to }) => [from, to])).toEqual([[1, 6]]);
+    editor.destroy();
+  });
+
   it("adds and removes content and whole-draft classes across edits", () => {
     let includeWholeDraftEffect = true;
     const editor = createEditor(paragraphContent("tag"), {
