@@ -113,6 +113,7 @@ import {
   DEFAULT_PLUGIN_MENTION_TRIGGER,
   type PluginMentionTrigger,
 } from "@bb/client-core";
+import { usePluginCssList } from "@/lib/plugin-css";
 import {
   clearComposerEditorBridge,
   publishComposerEditorBridge,
@@ -1665,6 +1666,18 @@ export function PromptBoxInternal({
     }
     return { sources, observers };
   }, [resolvedComposerEditor, textEffects]);
+  const pluginEffectPluginIds = useMemo(
+    () =>
+      [
+        ...new Set(
+          pluginRichTextContributions.sources.flatMap((source) =>
+            source.pluginId === undefined ? [] : [source.pluginId],
+          ),
+        ),
+      ].sort(),
+    [pluginRichTextContributions.sources],
+  );
+  usePluginCssList(pluginEffectPluginIds);
   const pluginDecorationSourcesRef = useRef(
     pluginRichTextContributions.sources,
   );
