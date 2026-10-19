@@ -411,15 +411,15 @@ function moveCaretLines(
             caretLines === null || !rangeTouchesLines(range, caretLines),
         );
   let decorations = previous.decorations ?? DecorationSet.empty;
-  if (hide.length > 0) {
-    decorations = decorations.remove(
-      hide.flatMap((entry) => entry.decorations),
-    );
-  }
   if (reveal.length > 0) {
     decorations = decorations.add(
       doc,
       reveal.flatMap((entry) => entry.decorations),
+    );
+  }
+  if (hide.length > 0) {
+    decorations = decorations.remove(
+      hide.flatMap((entry) => entry.decorations),
     );
   }
   return decorations === DecorationSet.empty ? null : decorations;
