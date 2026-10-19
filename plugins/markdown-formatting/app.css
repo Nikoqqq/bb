@@ -1,50 +1,50 @@
-.bb-live-md-marker {
+.bb-markdown-marker {
   display: none;
 }
 
-.bb-live-md-bullet {
+.bb-markdown-bullet {
   position: relative;
   color: transparent;
 }
 
-.bb-live-md-bullet::before {
+.bb-markdown-bullet::before {
   content: "•";
   position: absolute;
   left: 0;
   color: var(--muted-foreground);
 }
 
-.bb-live-md-ordered {
+.bb-markdown-ordered {
   color: var(--muted-foreground);
 }
 
-.bb-live-md-h1,
-.bb-live-md-h2,
-.bb-live-md-h3 {
+.bb-markdown-h1,
+.bb-markdown-h2,
+.bb-markdown-h3 {
   font-weight: 600;
 }
 
-.bb-live-md-h1 {
+.bb-markdown-h1 {
   font-size: var(--text-lg);
 }
 
-.bb-live-md-h2 {
+.bb-markdown-h2 {
   font-size: var(--text-base);
 }
 
-.bb-live-md-h3 {
+.bb-markdown-h3 {
   font-size: var(--text-sm);
 }
 
-.bb-live-md-strong {
+.bb-markdown-strong {
   font-weight: 600;
 }
 
-.bb-live-md-em {
+.bb-markdown-em {
   font-style: italic;
 }
 
-.bb-live-md-code {
+.bb-markdown-code {
   border-radius: 0.25rem;
   background: color-mix(in oklab, var(--muted) 70%, transparent);
   padding: 0 0.2em;

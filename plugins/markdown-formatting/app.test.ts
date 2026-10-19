@@ -3,7 +3,7 @@ import { loadPluginApp } from "@get-bb/plugin-sdk/testing/app";
 
 const app = await loadPluginApp(() => import("./app"));
 
-describe("Live Markdown app", () => {
+describe("Markdown Formatting app", () => {
   it("registers paint-only rules, hiding symbols off the caret line", () => {
     const [customization] = app.composerCustomizations;
     const effects = customization?.richText?.effects ?? [];

@@ -1,7 +1,7 @@
 Format Markdown as you type in the prompt box, while bb sends exactly the text you typed.
 
-Disabled by default. Enable **Live Markdown** in Settings → Plugins or run
-`bb plugin enable bb--live-markdown`.
+Disabled by default. Enable **Markdown Formatting** in Settings → Plugins or run
+`bb plugin enable bb--markdown-formatting`.
 
 ## What you get
 
