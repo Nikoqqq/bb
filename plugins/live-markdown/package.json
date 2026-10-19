@@ -1,5 +1,5 @@
 {
-  "name": "bb-plugin-bb--markdown-formatting",
+  "name": "bb-plugin-bb--live-markdown",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,7 +9,7 @@
     "bbPluginSdk": ">=0.6.57"
   },
   "bb": {
-    "name": "Markdown Formatting",
+    "name": "Live Markdown",
     "description": "Formats Markdown as you type in the prompt box while sending exactly the text you typed.",
     "branding": {
       "icon": "EditFile"

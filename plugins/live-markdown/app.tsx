@@ -19,7 +19,7 @@ const CARET_LINE_PLAIN_KINDS: readonly MarkdownRangeKind[] = [
 function effect(kind: MarkdownRangeKind, skipAtCaret: boolean) {
   return {
     id: kind,
-    className: `bb-markdown-${kind}`,
+    className: `bb-live-md-${kind}`,
     ...(skipAtCaret ? { experimental_skipAtCaret: "line" as const } : {}),
     match: (text: string) => markdownRanges(text)[kind],
   };

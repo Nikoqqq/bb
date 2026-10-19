@@ -1387,10 +1387,10 @@
         "topo"
       ]
     },
-    "bb-plugin-bb--markdown-formatting#typecheck": {
+    "bb-plugin-bb--live-markdown#typecheck": {
       "dependsOn": ["@get-bb/plugin-sdk#build:types", "topo"]
     },
-    "bb-plugin-bb--markdown-formatting#test": {
+    "bb-plugin-bb--live-markdown#test": {
       "env": ["VITEST_MAX_WORKERS"],
       "dependsOn": ["@get-bb/plugin-sdk#build", "topo"]
     },
