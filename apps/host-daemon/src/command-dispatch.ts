@@ -35,6 +35,7 @@ import {
   inspectHostGitSource,
   listHostBranchOptions,
 } from "./command-handlers/host-branches.js";
+import { resolveHostDirectories } from "./command-handlers/host-directories.js";
 import {
   installGlobalSkills,
   readGlobalSkillsStatus,
@@ -660,6 +661,7 @@ const onlineRpcHandlers: OnlineRpcHandlerMap = {
   "host.global_skills_status": async (command) =>
     readGlobalSkillsStatus(command, {}),
   "host.inspect_git_source": inspectHostGitSource,
+  "host.resolve_directories": resolveHostDirectories,
   "host.list_branch_options": listHostBranchOptions,
   "host.read_file": readHostFile,
   "host.read_file_chunk": readHostFileChunk,

@@ -369,6 +369,16 @@ const ONLINE_RPC_RESPONSE_RESULT_FIXTURES: OnlineRpcResponseResultFixtures = {
     },
     originDefaultBranch: "origin/main",
   },
+  "host.resolve_directories": {
+    entries: [
+      {
+        path: "/home/user/code/app",
+        realPath: "/home/user/code/app",
+        gitCommonDir: "/home/user/code/app/.git",
+      },
+      { path: "/home/user/missing", realPath: null, gitCommonDir: null },
+    ],
+  },
   "host.list_branch_options": {
     branches: ["main"],
     branchesTruncated: false,

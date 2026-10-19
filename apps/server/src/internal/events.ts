@@ -542,6 +542,7 @@ async function applyEventEffects(
           continue;
         }
         deps.pendingInteractions.interruptPendingInteractionsForThreadIds({
+          includeServerOwned: false,
           threadIds: [entry.threadId],
           reason:
             "Provider process exited while awaiting user interaction; retry the thread to continue",

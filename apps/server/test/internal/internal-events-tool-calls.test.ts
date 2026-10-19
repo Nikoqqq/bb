@@ -39,6 +39,7 @@ import {
   seedThread,
   seedThreadFixture,
   seedThreadRuntimeState,
+  seedTurnPermissionMode,
 } from "../helpers/seed.js";
 import { startTestServer, withTestHarness } from "../helpers/test-app.js";
 import type { TestAppHarness } from "../helpers/test-app.js";
@@ -1066,6 +1067,13 @@ describe("internal event and tool-call routes", () => {
           providerThreadId: "provider-tool-call",
         },
       });
+      seedTurnPermissionMode(harness.deps, {
+        environmentId: currentEnvironment.id,
+        permissionMode: "full",
+        providerThreadId: "provider-tool-call",
+        threadId: thread.id,
+        turnId: "turn-existing-environment",
+      });
 
       const response = await postToolCall({
         harness,
@@ -1101,9 +1109,11 @@ describe("internal event and tool-call routes", () => {
         .all();
       expect(storedEvents.map((event) => event.type)).toEqual([
         "turn/started",
+        "client/turn/requested",
+        "turn/input/accepted",
         "system/operation",
       ]);
-      expect(storedEvents[1]).toMatchObject({
+      expect(storedEvents[3]).toMatchObject({
         type: "system/operation",
         scopeKind: "turn",
         turnId: "turn-existing-environment",
@@ -1136,6 +1146,13 @@ describe("internal event and tool-call routes", () => {
         data: {
           providerThreadId: "provider-tool-call",
         },
+      });
+      seedTurnPermissionMode(harness.deps, {
+        environmentId: currentEnvironment.id,
+        permissionMode: "full",
+        providerThreadId: "provider-tool-call",
+        threadId: thread.id,
+        turnId: "turn-new-environment",
       });
 
       const responsePromise = postToolCall({
@@ -1207,9 +1224,11 @@ describe("internal event and tool-call routes", () => {
         .all();
       expect(storedEvents.map((event) => event.type)).toEqual([
         "turn/started",
+        "client/turn/requested",
+        "turn/input/accepted",
         "system/operation",
       ]);
-      expect(storedEvents[1]).toMatchObject({
+      expect(storedEvents[3]).toMatchObject({
         scopeKind: "turn",
         turnId: "turn-new-environment",
       });
@@ -1254,6 +1273,13 @@ describe("internal event and tool-call routes", () => {
         data: {
           providerThreadId: "provider-tool-call",
         },
+      });
+      seedTurnPermissionMode(harness.deps, {
+        environmentId: currentEnvironment.id,
+        permissionMode: "full",
+        providerThreadId: "provider-tool-call",
+        threadId: thread.id,
+        turnId: "turn-shared-directory",
       });
 
       const responsePromise = postToolCall({
@@ -1332,6 +1358,13 @@ describe("internal event and tool-call routes", () => {
         type: "turn/started",
         scope: turnScope("turn-managed-alias"),
         data: { providerThreadId: "provider-tool-call" },
+      });
+      seedTurnPermissionMode(harness.deps, {
+        environmentId: currentEnvironment.id,
+        permissionMode: "full",
+        providerThreadId: "provider-tool-call",
+        threadId: thread.id,
+        turnId: "turn-managed-alias",
       });
 
       const response = await postToolCall({

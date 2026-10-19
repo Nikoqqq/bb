@@ -16,13 +16,22 @@ import {
   isHostPathRoot,
   turnScope,
 } from "@bb/domain";
-import type { DynamicTool, Thread, ToolCallResponse } from "@bb/domain";
+import type {
+  DynamicTool,
+  Thread,
+  ThreadEventScope,
+  ToolCallResponse,
+} from "@bb/domain";
 import type { AppDeps } from "../../types.js";
 import { runLiveHostCommand } from "../hosts/live-command.js";
 import { appendThreadEventInTransaction } from "./thread-events.js";
 import { buildEnvironmentProvisionCommand } from "./thread-create-helpers.js";
 import { findHostDataDir } from "../lib/entity-lookup.js";
 import { suppliedWorkspacePathRefusal } from "./workspace-path-claims.js";
+import {
+  requestEnvironmentDirectoryMoveApproval,
+  resolveEnvironmentDirectoryMovePlacement,
+} from "./environment-directory-approval.js";
 
 export const UPDATE_ENVIRONMENT_DIRECTORY_TOOL_NAME =
   "update_environment_directory";
@@ -38,7 +47,7 @@ const updateEnvironmentDirectoryInputSchema = z
 export const UPDATE_ENVIRONMENT_DIRECTORY_TOOL: DynamicTool = {
   name: UPDATE_ENVIRONMENT_DIRECTORY_TOOL_NAME,
   description:
-    "Move this bb thread to a different working directory for subsequent turns. Use this when the user asks to switch to a new checkout, worktree, or local directory. The path must be an absolute existing directory on the current host. The tool reuses this project's existing bb environment for that host/path, otherwise it creates an unmanaged environment after validating the path. Another project may hold its own environment for the same directory; that is allowed, except for a bb-managed worktree owned by another project, which this tool refuses. After a successful switch, stop the current turn because the running provider cwd will not change until the next turn.",
+    "Move this bb thread to a different working directory for subsequent turns. Use this when the user asks to switch to a new checkout, worktree, or local directory. The path must be an absolute existing directory on the current host. The tool reuses this project's existing bb environment for that host/path, otherwise it creates an unmanaged environment after validating the path. Another project may hold its own environment for the same directory; that is allowed, except for a bb-managed worktree owned by another project, which this tool refuses. In Accept edits, a directory outside this project and its git worktrees needs the user's approval: the tool asks them and returns without moving. After a successful switch, stop the current turn because the running provider cwd will not change until the next turn.",
   inputSchema: {
     type: "object",
     properties: {
@@ -61,6 +70,7 @@ export const UPDATE_ENVIRONMENT_DIRECTORY_TOOL: DynamicTool = {
 };
 
 interface HandleUpdateEnvironmentDirectoryToolCallArgs {
+  callId: string;
   currentEnvironment: EnvironmentRow;
   input: unknown;
   thread: Thread;
@@ -84,11 +94,11 @@ function toolCallTextResponse(
   };
 }
 
-function toolCallFailure(text: string): ToolCallResponse {
+export function toolCallFailure(text: string): ToolCallResponse {
   return toolCallTextResponse(false, text);
 }
 
-function toolCallSuccess(text: string): ToolCallResponse {
+export function toolCallSuccess(text: string): ToolCallResponse {
   return toolCallTextResponse(true, text);
 }
 
@@ -109,7 +119,7 @@ function validateDirectoryPath(path: string): string | null {
   return null;
 }
 
-function threadWritableFailure(thread: Thread): string | null {
+export function threadWritableFailure(thread: Thread): string | null {
   if (thread.deletedAt !== null) {
     return "Cannot update the environment directory for a deleted thread.";
   }
@@ -148,9 +158,9 @@ function attachReadyEnvironment(
   args: {
     currentEnvironment: EnvironmentRow;
     createdEnvironment: boolean;
+    scope: ThreadEventScope;
     targetEnvironment: ReadyEnvironment;
     thread: Thread;
-    turnId: string;
   },
 ): AttachEnvironmentResult {
   const result = deps.db.transaction(
@@ -183,7 +193,7 @@ function attachReadyEnvironment(
         threadId: latestThread.id,
         environmentId: args.targetEnvironment.id,
         type: "system/operation",
-        scope: turnScope(args.turnId),
+        scope: args.scope,
         data: {
           operation: "environment_directory_update",
           operationId: createEventId(),
@@ -284,6 +294,53 @@ export async function handleUpdateEnvironmentDirectoryToolCall(
     return toolCallFailure(writableFailure);
   }
 
+  if (
+    getEnvironment(deps.db, args.currentEnvironment.id)?.path === normalizedPath
+  ) {
+    return toolCallSuccess(
+      `This thread is already using ${normalizedPath} as its environment directory.`,
+    );
+  }
+
+  const placement = await resolveEnvironmentDirectoryMovePlacement(deps, {
+    currentEnvironment: args.currentEnvironment,
+    path: normalizedPath,
+    thread: args.thread,
+    turnId: args.turnId,
+  });
+  switch (placement.kind) {
+    case "refused":
+      return toolCallFailure(placement.message);
+    case "needs_approval":
+      return requestEnvironmentDirectoryMoveApproval(deps, {
+        callId: args.callId,
+        currentEnvironment: args.currentEnvironment,
+        path: placement.path,
+        thread: args.thread,
+        turnId: args.turnId,
+      });
+    case "move":
+      return moveThreadToDirectory(deps, {
+        currentEnvironment: args.currentEnvironment,
+        path: placement.path,
+        scope: turnScope(args.turnId),
+        thread: args.thread,
+      });
+  }
+}
+
+interface MoveThreadToDirectoryArgs {
+  currentEnvironment: EnvironmentRow;
+  path: string;
+  scope: ThreadEventScope;
+  thread: Thread;
+}
+
+export async function moveThreadToDirectory(
+  deps: AppDeps,
+  args: MoveThreadToDirectoryArgs,
+): Promise<ToolCallResponse> {
+  const normalizedPath = args.path;
   try {
     assertEnvironmentPathAvailable(deps, {
       hostId: args.currentEnvironment.hostId,
@@ -355,9 +412,9 @@ export async function handleUpdateEnvironmentDirectoryToolCall(
     attachResult = attachReadyEnvironment(deps, {
       currentEnvironment: args.currentEnvironment,
       createdEnvironment,
+      scope: args.scope,
       targetEnvironment,
       thread: args.thread,
-      turnId: args.turnId,
     });
   } catch (error) {
     return toolCallFailure(
@@ -367,6 +424,10 @@ export async function handleUpdateEnvironmentDirectoryToolCall(
 
   switch (attachResult.kind) {
     case "attached":
+      deps.pendingInteractions.cancelServerApprovals({
+        reason: "superseded",
+        threadId: args.thread.id,
+      });
       return toolCallSuccess(successMessage(targetEnvironment.path));
     case "environment_changed":
       return toolCallFailure(

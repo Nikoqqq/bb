@@ -57,6 +57,7 @@ import {
   seedThread,
   seedThreadRuntimeState,
   seedTurnStarted,
+  seedTurnPermissionMode,
 } from "../helpers/seed.js";
 import { withTestHarness, type TestAppHarness } from "../helpers/test-app.js";
 
@@ -1335,9 +1336,17 @@ describe("idle cold-start activation", () => {
         threadId: thread.id,
         turnId: "turn_before_switch",
       });
+      seedTurnPermissionMode(harness.deps, {
+        environmentId: environment.id,
+        permissionMode: "full",
+        providerThreadId: "provider-send-dispatch-4",
+        threadId: thread.id,
+        turnId: "turn_before_switch",
+      });
       const updateResult = await handleUpdateEnvironmentDirectoryToolCall(
         harness.deps,
         {
+          callId: "call_before_switch",
           currentEnvironment: environment,
           input: { path: targetEnvironment.path },
           thread,
@@ -1352,7 +1361,7 @@ describe("idle cold-start activation", () => {
         threadId: thread.id,
         environmentId: targetEnvironment.id,
         providerThreadId: `provider-send-dispatch-4`,
-        sequence: 5,
+        sequence: 7,
         type: "turn/completed",
         scope: turnScope("turn_after_switch"),
         data: {
@@ -1904,7 +1913,11 @@ describe("turn held open for background work", () => {
     };
   }
 
-  function queueIfActive(harness: TestAppHarness, thread: Thread, text: string) {
+  function queueIfActive(
+    harness: TestAppHarness,
+    thread: Thread,
+    text: string,
+  ) {
     return acceptThreadSendRequest(harness.deps, {
       payload: {
         input: textInput(text),
