@@ -51,6 +51,9 @@ export interface PromptDecorationExtensionOptions {
 
 interface PromptDecorationPluginState {
   decorations: DecorationSet | null;
+  matched: PromptDecorationMatches;
+  caretLines: PromptDecorationRange | null;
+  focused: boolean;
   revision: number;
   rebuildPending: boolean;
 }
@@ -166,18 +169,37 @@ function defaultObserverErrorLogger(observerId: string, error: unknown): void {
   );
 }
 
-function buildDecorations(
+type PromptEditorSerialization = ReturnType<
+  typeof promptEditorSerializationFromDoc
+>;
+
+interface PromptDecorationMatch {
+  sourceIndex: number;
+  ruleIndex: number;
+  source: PromptDecorationSource;
+  rule: PromptDecorationRule;
+  ranges: PromptDecorationRange[];
+}
+
+interface PromptDecorationMatches {
+  serialization: PromptEditorSerialization;
+  matches: PromptDecorationMatch[];
+  hasOffCaretLineRules: boolean;
+}
+
+function matchDecorationRules(
   doc: ProseMirrorNode,
   sources: readonly PromptDecorationSource[],
   disabledRules: Map<string, string | number>,
   onRuleError: PromptDecorationExtensionOptions["onRuleError"],
-): DecorationSet | null {
+): PromptDecorationMatches {
   const serialization = promptEditorSerializationFromDoc(doc);
   const orderedSources: PromptDecorationSource[] = [
     BUILT_IN_HOST_SOURCE,
     ...sources,
   ];
-  const decorations: Decoration[] = [];
+  const matches: PromptDecorationMatch[] = [];
+  let hasOffCaretLineRules = false;
 
   for (const [sourceIndex, source] of orderedSources.entries()) {
     for (const [ruleIndex, rule] of source.effects.entries()) {
@@ -188,8 +210,7 @@ function buildDecorations(
 
       let ranges: PromptDecorationRange[];
       try {
-        const result: unknown = rule.match(serialization.text);
-        const parsed = parseRanges(result);
+        const parsed = parseRanges(rule.match(serialization.text));
         if (parsed === null) {
           throw new TypeError("match must return valid integer ranges");
         }
@@ -199,33 +220,112 @@ function buildDecorations(
         (onRuleError ?? defaultRuleErrorLogger)(source.id, rule.id, error);
         continue;
       }
+      if (ranges.length === 0) continue;
+      if (rule.experimental_offCaretLineOnly === true) {
+        hasOffCaretLineRules = true;
+      }
+      matches.push({ sourceIndex, ruleIndex, source, rule, ranges });
+    }
+  }
 
-      for (const range of ranges) {
-        if (range.from >= serialization.text.length) {
-          continue;
-        }
-        const boundedRange = {
-          from: range.from,
-          to: Math.min(range.to, serialization.text.length),
-        };
-        for (const segment of serialization.offsetMapping) {
-          const decoration = decorationForIntersection(
-            doc,
-            segment,
-            boundedRange,
-            rule.className,
-            {
-              className: rule.className,
-              ...(source.pluginId
-                ? { "data-bb-plugin-decoration": source.pluginId }
-                : {}),
-              ruleId: rule.id,
-              sourceId: source.id,
-              sourceOrder: `${sourceIndex}:${ruleIndex}`,
-            },
-          );
-          if (decoration !== null) decorations.push(decoration);
-        }
+  return { serialization, matches, hasOffCaretLineRules };
+}
+
+function promptCaretLines(
+  state: Pick<EditorState, "doc" | "selection">,
+  text: string,
+): PromptDecorationRange {
+  const { doc, selection } = state;
+  const fromOffset = promptEditorSerializationFromDoc(
+    doc.cut(0, selection.from),
+  ).text.length;
+  const toOffset = selection.empty
+    ? fromOffset
+    : promptEditorSerializationFromDoc(doc.cut(0, selection.to)).text.length;
+  const lineStart = text.lastIndexOf("\n", fromOffset - 1) + 1;
+  const nextBreak = text.indexOf("\n", toOffset);
+  return { from: lineStart, to: nextBreak === -1 ? text.length : nextBreak };
+}
+
+function rangeTouchesLines(
+  range: PromptDecorationRange,
+  lines: PromptDecorationRange,
+): boolean {
+  return range.from <= lines.to && range.to >= lines.from;
+}
+
+function sameLines(
+  left: PromptDecorationRange | null,
+  right: PromptDecorationRange | null,
+): boolean {
+  return left?.from === right?.from && left?.to === right?.to;
+}
+
+function firstSegmentEndingAfter(
+  segments: readonly PromptEditorOffsetSegment[],
+  offset: number,
+): number {
+  let low = 0;
+  let high = segments.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (segments[middle]!.textTo > offset) high = middle;
+    else low = middle + 1;
+  }
+  return low;
+}
+
+function paintDecorations(
+  doc: ProseMirrorNode,
+  matched: PromptDecorationMatches,
+  caretLines: PromptDecorationRange | null,
+): DecorationSet | null {
+  const { serialization } = matched;
+  const decorations: Decoration[] = [];
+
+  for (const {
+    sourceIndex,
+    ruleIndex,
+    source,
+    rule,
+    ranges,
+  } of matched.matches) {
+    const hiddenLines =
+      rule.experimental_offCaretLineOnly === true ? caretLines : null;
+    for (const range of ranges) {
+      if (range.from >= serialization.text.length) {
+        continue;
+      }
+      if (hiddenLines !== null && rangeTouchesLines(range, hiddenLines)) {
+        continue;
+      }
+      const boundedRange = {
+        from: range.from,
+        to: Math.min(range.to, serialization.text.length),
+      };
+      const segments = serialization.offsetMapping;
+      for (
+        let index = firstSegmentEndingAfter(segments, boundedRange.from);
+        index < segments.length && segments[index]!.textFrom < boundedRange.to;
+        index += 1
+      ) {
+        const segment = segments[index]!;
+        const decoration = decorationForIntersection(
+          doc,
+          segment,
+          boundedRange,
+          rule.className,
+          {
+            className: rule.className,
+            ...(source.pluginId
+              ? { "data-bb-plugin-decoration": source.pluginId }
+              : {}),
+            ruleId: rule.id,
+            sourceId: source.id,
+            sourceOrder: `${sourceIndex}:${ruleIndex}`,
+          },
+        );
+        if (decoration !== null) decorations.push(decoration);
       }
     }
   }
@@ -233,6 +333,16 @@ function buildDecorations(
   return decorations.length === 0
     ? null
     : DecorationSet.create(doc, decorations);
+}
+
+function caretLinesFor(
+  state: EditorState,
+  matched: PromptDecorationMatches,
+  focused: boolean,
+): PromptDecorationRange | null {
+  return focused && matched.hasOffCaretLineRules
+    ? promptCaretLines(state, matched.serialization.text)
+    : null;
 }
 
 function structuredMention(
@@ -321,42 +431,99 @@ export const PromptDecorationExtension =
         new Plugin<PromptDecorationPluginState>({
           key: promptDecorationPluginKey,
           state: {
-            init: (_config, state) => ({
-              decorations: buildDecorations(
+            init: (_config, state) => {
+              const matched = matchDecorationRules(
                 state.doc,
                 options.getDecorationSources?.() ?? EMPTY_SOURCES,
                 disabledRules,
                 options.onRuleError,
-              ),
-              revision: 0,
-              rebuildPending: false,
-            }),
+              );
+              return {
+                decorations: paintDecorations(state.doc, matched, null),
+                matched,
+                caretLines: null,
+                focused: false,
+                revision: 0,
+                rebuildPending: false,
+              };
+            },
             apply(transaction, previous, _oldState, newState) {
               const meta = promptDecorationMeta(transaction);
-              const refreshed = meta === "refresh";
-              if (meta === null && !transaction.docChanged) return previous;
+              const focused =
+                transaction.getMeta("focus") !== undefined
+                  ? true
+                  : transaction.getMeta("blur") !== undefined
+                    ? false
+                    : previous.focused;
+              const rebuild =
+                meta === "refresh" ||
+                meta === "deferred-rebuild" ||
+                transaction.docChanged;
+              if (!rebuild) {
+                if (previous.rebuildPending) {
+                  return focused === previous.focused
+                    ? previous
+                    : { ...previous, focused };
+                }
+                if (focused === previous.focused && !transaction.selectionSet) {
+                  return previous;
+                }
+                const caretLines = caretLinesFor(
+                  newState,
+                  previous.matched,
+                  focused,
+                );
+                if (sameLines(caretLines, previous.caretLines)) {
+                  return focused === previous.focused
+                    ? previous
+                    : { ...previous, focused };
+                }
+                return {
+                  ...previous,
+                  decorations: paintDecorations(
+                    newState.doc,
+                    previous.matched,
+                    caretLines,
+                  ),
+                  caretLines,
+                  focused,
+                };
+              }
               if (
                 meta === null &&
                 newState.doc.content.size > PROMPT_DECORATION_LARGE_DOC_SIZE
               ) {
                 return {
+                  ...previous,
                   decorations:
                     previous.decorations?.map(
                       transaction.mapping,
                       newState.doc,
                     ) ?? null,
-                  revision: previous.revision,
+                  focused,
                   rebuildPending: true,
                 };
               }
+              const matched = matchDecorationRules(
+                newState.doc,
+                options.getDecorationSources?.() ?? EMPTY_SOURCES,
+                disabledRules,
+                options.onRuleError,
+              );
+              const caretLines = caretLinesFor(newState, matched, focused);
               return {
-                decorations: buildDecorations(
+                decorations: paintDecorations(
                   newState.doc,
-                  options.getDecorationSources?.() ?? EMPTY_SOURCES,
-                  disabledRules,
-                  options.onRuleError,
+                  matched,
+                  caretLines,
                 ),
-                revision: refreshed ? previous.revision + 1 : previous.revision,
+                matched,
+                caretLines,
+                focused,
+                revision:
+                  meta === "refresh"
+                    ? previous.revision + 1
+                    : previous.revision,
                 rebuildPending: false,
               };
             },

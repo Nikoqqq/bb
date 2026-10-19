@@ -2931,6 +2931,12 @@ export interface ComposerRichTextSpec {
     /** Plain-text offsets into the current structured draft. */
     match(text: string): readonly { from: number; to: number }[];
     className: string;
+    /**
+     * Apply `className` only to lines the selection does not touch, so the
+     * line being edited shows its plain text. While the composer is unfocused
+     * no line holds the caret and the class applies everywhere.
+     */
+    experimental_offCaretLineOnly?: boolean;
   }[];
   /**
    * Debounced, read-only observation of the structured draft.

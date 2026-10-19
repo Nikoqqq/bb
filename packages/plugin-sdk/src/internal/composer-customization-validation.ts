@@ -4,6 +4,9 @@ import type {
   PluginComposerThreadRowStatus,
 } from "@get-bb/plugin-sdk";
 
+type ComposerEditorEffect = NonNullable<
+  NonNullable<ComposerCustomization["richText"]>["effects"]
+>[number];
 export const PLUGIN_SLOT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const PLUGIN_MESSAGE_DIRECTIVE_ID_PATTERN = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/;
 
@@ -323,17 +326,34 @@ function parseRegions(
         onRejected,
         (entryKind, value) => {
           const entry = value as Record<string, unknown> | null;
+          const id = requireSlotId(entryKind, entry?.id);
+          const className = requireNonEmptyString(
+            entryKind,
+            "className",
+            entry?.className,
+          );
+          const offCaretLineOnly = entry?.experimental_offCaretLineOnly;
+          if (
+            offCaretLineOnly !== undefined &&
+            typeof offCaretLineOnly !== "boolean"
+          ) {
+            throw new Error(
+              `${entryKind}: "experimental_offCaretLineOnly" must be a boolean when set`,
+            );
+          }
+          const shared = {
+            id,
+            className,
+            ...(offCaretLineOnly === true
+              ? { experimental_offCaretLineOnly: true }
+              : {}),
+          };
           return {
-            id: requireSlotId(entryKind, entry?.id),
-            match: requireFunction<
-              NonNullable<
-                NonNullable<ComposerCustomization["richText"]>["effects"]
-              >[number]["match"]
-            >(entryKind, "match", entry?.match),
-            className: requireNonEmptyString(
+            ...shared,
+            match: requireFunction<ComposerEditorEffect["match"]>(
               entryKind,
-              "className",
-              entry?.className,
+              "match",
+              entry?.match,
             ),
           };
         },
