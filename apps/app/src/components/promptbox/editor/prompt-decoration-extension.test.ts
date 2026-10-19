@@ -312,19 +312,22 @@ describe("PromptDecorationExtension", () => {
     const editor = markerEditor(twoMarkedParagraphs);
     editor.commands.setTextSelection(3);
     editor.view.dom.dispatchEvent(new FocusEvent("focus"));
-    const create = vi.spyOn(DecorationSet, "create");
+    const createDecorationSet = DecorationSet.create;
+    let markerRebuilds = 0;
+    vi.spyOn(DecorationSet, "create").mockImplementation((doc, decorations) => {
+      if (
+        decorations.some((decoration) => decoration.spec.className === "marker")
+      ) {
+        markerRebuilds += 1;
+      }
+      return createDecorationSet.call(DecorationSet, doc, decorations);
+    });
 
     editor.commands.setTextSelection(10);
     editor.view.dom.dispatchEvent(new FocusEvent("blur"));
     editor.view.dom.dispatchEvent(new FocusEvent("focus"));
 
-    expect(
-      create.mock.calls.filter(([, decorations]) =>
-        decorations.some(
-          (decoration) => decoration.spec.className === "marker",
-        ),
-      ),
-    ).toEqual([]);
+    expect(markerRebuilds).toBe(0);
     expect(markerPositions(editor)).toEqual([1, 4]);
     editor.destroy();
   });
