@@ -11,7 +11,7 @@ describe("Live Markdown app", () => {
       effects
         .filter((effect) => effect.experimental_skipAtCaret === "line")
         .map((effect) => effect.id),
-    ).toEqual(["marker", "bullet"]);
+    ).toEqual(["marker"]);
     const strong = effects.find((effect) => effect.id === "strong");
     expect(strong?.match("a **b**")).toEqual([{ from: 4, to: 5 }]);
   });

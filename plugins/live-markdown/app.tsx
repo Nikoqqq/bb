@@ -3,6 +3,7 @@ import "./app.css";
 import { markdownRanges, type MarkdownRangeKind } from "./markdown.js";
 
 const STYLED_KINDS: readonly MarkdownRangeKind[] = [
+  "bullet",
   "ordered",
   "h1",
   "h2",
@@ -11,10 +12,7 @@ const STYLED_KINDS: readonly MarkdownRangeKind[] = [
   "em",
   "code",
 ];
-const CARET_LINE_PLAIN_KINDS: readonly MarkdownRangeKind[] = [
-  "marker",
-  "bullet",
-];
+const CARET_LINE_PLAIN_KINDS: readonly MarkdownRangeKind[] = ["marker"];
 
 function effect(kind: MarkdownRangeKind, skipAtCaret: boolean) {
   return {

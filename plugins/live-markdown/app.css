@@ -4,6 +4,8 @@
 
 .bb-live-md-bullet {
   position: relative;
+  display: inline-block;
+  min-width: 1.4em;
   color: transparent;
 }
 
@@ -15,7 +17,10 @@
 }
 
 .bb-live-md-ordered {
+  display: inline-block;
+  min-width: 1.4em;
   color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
 }
 
 .bb-live-md-h1,
