@@ -1,0 +1,53 @@
+.bb-live-md-marker {
+  display: none;
+}
+
+.bb-live-md-bullet {
+  position: relative;
+  color: transparent;
+}
+
+.bb-live-md-bullet::before {
+  content: "•";
+  position: absolute;
+  left: 0;
+  color: var(--muted-foreground);
+}
+
+.bb-live-md-ordered {
+  color: var(--muted-foreground);
+}
+
+.bb-live-md-h1,
+.bb-live-md-h2,
+.bb-live-md-h3 {
+  font-weight: 600;
+}
+
+.bb-live-md-h1 {
+  font-size: 1.3em;
+}
+
+.bb-live-md-h2 {
+  font-size: 1.15em;
+}
+
+.bb-live-md-h3 {
+  font-size: 1.05em;
+}
+
+.bb-live-md-strong {
+  font-weight: 600;
+}
+
+.bb-live-md-em {
+  font-style: italic;
+}
+
+.bb-live-md-code {
+  border-radius: 0.25rem;
+  background: color-mix(in oklab, var(--ink) 8%, transparent);
+  padding: 0 0.2em;
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}

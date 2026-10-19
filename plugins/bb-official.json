@@ -181,6 +181,10 @@
     "category": "memory-and-context",
     "screenshots": []
   },
+  "live-markdown": {
+    "category": "thread-content",
+    "screenshots": []
+  },
   "mcp": {
     "category": "cloud-and-remote",
     "screenshots": []
