@@ -47,6 +47,34 @@ describe("parseMarkdownRanges", () => {
     expect(texts(text, "marker")).toEqual([]);
   });
 
+  it("keeps bold and italic around and after inline code", () => {
+    const text =
+      "call `f(**kwargs)` then **stop** and **Rename `foo`** *use `x`*";
+    expect(texts(text, "code")).toEqual(["f(**kwargs)", "foo", "x"]);
+    expect(texts(text, "strong")).toEqual(["stop", "Rename `foo`"]);
+    expect(texts(text, "em")).toEqual(["use `x`"]);
+  });
+
+  it("matches backtick runs of equal length", () => {
+    const text = "run ```npm i``` and ``a`b`` now";
+    expect(texts(text, "code")).toEqual(["npm i", "a`b"]);
+    expect(texts(text, "marker")).toEqual(["```", "```", "``", "``"]);
+  });
+
+  it("nests bold and italic", () => {
+    expect(texts("***both***", "em")).toEqual(["both"]);
+    expect(texts("***both***", "strong")).toEqual(["*both*"]);
+    expect(texts("*a **b** c*", "em")).toEqual(["a **b** c"]);
+    expect(texts("*a **b** c*", "strong")).toEqual(["b"]);
+  });
+
+  it("treats a one-line triple-backtick span as inline code, not a fence", () => {
+    const text = "```npm install```\n**bold after**\n# Heading";
+    expect(texts(text, "code")).toEqual(["npm install"]);
+    expect(texts(text, "strong")).toEqual(["bold after"]);
+    expect(texts(text, "h1")).toEqual(["Heading"]);
+  });
+
   it("formats quoted lines and skips fenced code", () => {
     const text = "> **quoted**\n```\n# not a heading\n```\n# heading";
     expect(texts(text, "strong")).toEqual(["quoted"]);

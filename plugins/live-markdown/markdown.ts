@@ -20,7 +20,10 @@ const HEADING = /^(#{1,6})[ \t]+(?=\S)/;
 const BULLET = /^([ \t]*)([-*+])([ \t]+)(?=\S)/;
 const ORDERED = /^([ \t]*)(\d{1,9})([.)])([ \t]+)(?=\S)/;
 const QUOTE = /^> ?/;
-const CODE_SPAN = /`([^`\n]+)`/g;
+const CODE_SPAN = /(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)/g;
+const FENCE_OPEN = /^[ \t]{0,3}(`{3,})[^`]*$/;
+const FENCE_CLOSE = /^[ \t]{0,3}(`{3,})[ \t]*$/;
+const MASK = "\uFFFC";
 const INLINE_RULES: readonly {
   kind: "strong" | "em";
   delimiter: number;
@@ -29,12 +32,12 @@ const INLINE_RULES: readonly {
   {
     kind: "strong",
     delimiter: 2,
-    pattern: /(?<![*\\])\*\*(?=[^\s*])([^\n]*?[^\s\\])\*\*(?!\*)/g,
+    pattern: /(?<![*\\])\*\*(?=\S)([^\n]*?[^\s\\])\*\*(?!\*)/g,
   },
   {
     kind: "strong",
     delimiter: 2,
-    pattern: /(?<![_\w\\])__(?=[^\s_])([^\n]*?[^\s\\])__(?![_\w])/g,
+    pattern: /(?<![_\w\\])__(?=\S)([^\n]*?[^\s\\])__(?![_\w])/g,
   },
   {
     kind: "em",
@@ -62,10 +65,8 @@ function emptyRanges(): MarkdownRanges {
   };
 }
 
-function overlaps(range: TextRange, blocked: readonly TextRange[]): boolean {
-  return blocked.some(
-    (block) => range.from < block.to && range.to > block.from,
-  );
+function mask(line: string, from: number, to: number): string {
+  return line.slice(0, from) + MASK.repeat(to - from) + line.slice(to);
 }
 
 function parseInline(
@@ -73,25 +74,35 @@ function parseInline(
   lineStart: number,
   ranges: MarkdownRanges,
 ): void {
-  const blocked: TextRange[] = [];
+  let masked = line;
 
   for (const match of line.matchAll(CODE_SPAN)) {
+    const run = match[1]!.length;
     const from = lineStart + match.index;
     const to = from + match[0].length;
-    if (overlaps({ from, to }, blocked)) continue;
-    ranges.marker.push({ from, to: from + 1 }, { from: to - 1, to });
-    ranges.code.push({ from: from + 1, to: to - 1 });
-    blocked.push({ from, to });
+    ranges.marker.push({ from, to: from + run }, { from: to - run, to });
+    ranges.code.push({ from: from + run, to: to - run });
+    masked = mask(masked, match.index, match.index + match[0].length);
   }
 
   for (const rule of INLINE_RULES) {
-    for (const match of line.matchAll(rule.pattern)) {
+    const delimiters: TextRange[] = [];
+    for (const match of masked.matchAll(rule.pattern)) {
       const from = lineStart + match.index;
       const to = from + match[0].length;
       const content = { from: from + rule.delimiter, to: to - rule.delimiter };
-      if (overlaps({ from, to }, blocked)) continue;
       ranges.marker.push({ from, to: content.from }, { from: content.to, to });
       ranges[rule.kind].push(content);
+      delimiters.push(
+        { from: match.index, to: match.index + rule.delimiter },
+        {
+          from: match.index + match[0].length - rule.delimiter,
+          to: match.index + match[0].length,
+        },
+      );
+    }
+    for (const delimiter of delimiters) {
+      masked = mask(masked, delimiter.from, delimiter.to);
     }
   }
 }
@@ -140,12 +151,15 @@ function parseLine(
 export function parseMarkdownRanges(text: string): MarkdownRanges {
   const ranges = emptyRanges();
   let lineStart = 0;
-  let inFence = false;
+  let fence: number | null = null;
   for (const line of text.split("\n")) {
-    if (/^[ \t]*```/.test(line)) {
-      inFence = !inFence;
-    } else if (!inFence) {
-      parseLine(line, lineStart, ranges);
+    if (fence === null) {
+      const open = FENCE_OPEN.exec(line);
+      if (open === null) parseLine(line, lineStart, ranges);
+      else fence = open[1]!.length;
+    } else {
+      const close = FENCE_CLOSE.exec(line);
+      if (close !== null && close[1]!.length >= fence) fence = null;
     }
     lineStart += line.length + 1;
   }

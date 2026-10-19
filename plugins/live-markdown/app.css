@@ -25,15 +25,15 @@
 }
 
 .bb-live-md-h1 {
-  font-size: 1.3em;
+  font-size: var(--text-lg);
 }
 
 .bb-live-md-h2 {
-  font-size: 1.15em;
+  font-size: var(--text-base);
 }
 
 .bb-live-md-h3 {
-  font-size: 1.05em;
+  font-size: var(--text-sm);
 }
 
 .bb-live-md-strong {
@@ -46,8 +46,8 @@
 
 .bb-live-md-code {
   border-radius: 0.25rem;
-  background: color-mix(in oklab, var(--ink) 8%, transparent);
+  background: color-mix(in oklab, var(--muted) 70%, transparent);
   padding: 0 0.2em;
   font-family: var(--font-mono);
-  font-size: 0.9em;
+  font-size: var(--text-xs);
 }
