@@ -31,17 +31,21 @@ popup-id uniqueness across customizations.
 ## Composer rich-text caret awareness
 
 `ComposerRichTextSpec.effects[]` rules may set
-`experimental_offCaretLineOnly: true` to drop their class on every line the
-selection touches while the composer is focused. Rules stay paint-only.
+`experimental_skipAtCaret: "line"` to drop their class from ranges that touch a
+line the selection touches while the composer is focused. Rules stay
+paint-only.
 
 Docs: `frontend-hooks-and-ui.md`.
 
-Core path: every rule, including bb's built-in `ultracode` highlight, runs
-through the same evaluator in `prompt-decoration-extension.ts`, which caches
-match results per draft and repaints on selection, focus, and blur changes.
+Core path: no bb core feature sets this option yet. Every rule, including
+bb's built-in `ultracode` highlight, runs through the same evaluator in
+`prompt-decoration-extension.ts`, which caches match results per draft and,
+on caret moves, focus, and blur, removes or restores only the decorations of
+ranges on the lines the caret left or entered.
 
-Before stabilization, verify caret-line repaint cost on drafts over 100k
-characters and Safari selection and IME behavior with hidden ranges.
+Before stabilization, verify Safari selection and IME behavior with hidden
+ranges, decide whether a core feature should adopt the option, and whether a
+per-range `"range"` mode is needed.
 
 ## Composer commands
 

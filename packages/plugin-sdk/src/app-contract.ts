@@ -2932,11 +2932,11 @@ export interface ComposerRichTextSpec {
     match(text: string): readonly { from: number; to: number }[];
     className: string;
     /**
-     * Apply `className` only to lines the selection does not touch, so the
-     * line being edited shows its plain text. While the composer is unfocused
-     * no line holds the caret and the class applies everywhere.
+     * `"line"` skips this rule's ranges that touch a line the selection
+     * touches, so the line being edited shows its plain text. While the
+     * composer is unfocused the rule applies everywhere.
      */
-    experimental_offCaretLineOnly?: boolean;
+    experimental_skipAtCaret?: "line";
   }[];
   /**
    * Debounced, read-only observation of the structured draft.

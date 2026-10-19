@@ -2,6 +2,7 @@
 
 import type { ComposerView } from "@get-bb/plugin-sdk";
 import { Editor } from "@tiptap/core";
+import { DecorationSet } from "@tiptap/pm/view";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   PROMPT_DECORATION_LARGE_DOC_REBUILD_DELAY_MS,
@@ -226,7 +227,7 @@ describe("PromptDecorationExtension", () => {
               {
                 id: "marker",
                 className: "marker",
-                experimental_offCaretLineOnly: true,
+                experimental_skipAtCaret: "line",
                 match: (text) =>
                   Array.from(text.matchAll(/\*\*/g), (match) => ({
                     from: match.index,
@@ -261,6 +262,110 @@ describe("PromptDecorationExtension", () => {
 
     editor.view.dom.dispatchEvent(new FocusEvent("blur"));
     expect(markerPositions()).toEqual([1, 4, 8, 11]);
+    editor.destroy();
+  });
+
+  function markerEditor(content: object): Editor {
+    return createEditor(content, {
+      getDecorationSources: () => [
+        {
+          id: "plugin:markers",
+          generation: 1,
+          effects: [
+            {
+              id: "marker",
+              className: "marker",
+              experimental_skipAtCaret: "line",
+              match: (text) =>
+                Array.from(text.matchAll(/\*\*/g), (match) => ({
+                  from: match.index,
+                  to: match.index + 2,
+                })),
+            },
+          ],
+        },
+      ],
+    });
+  }
+
+  function markerPositions(editor: Editor): number[] {
+    return (
+      getPromptDecorationSet(editor.state)?.find(
+        undefined,
+        undefined,
+        (spec) => spec.className === "marker",
+      ) ?? []
+    )
+      .map((decoration) => decoration.from)
+      .sort((left, right) => left - right);
+  }
+
+  const twoMarkedParagraphs = {
+    type: "doc",
+    content: [
+      { type: "paragraph", content: [{ type: "text", text: "**a**" }] },
+      { type: "paragraph", content: [{ type: "text", text: "**b**" }] },
+    ],
+  };
+
+  it("moves the caret line without rebuilding every decoration", () => {
+    const editor = markerEditor(twoMarkedParagraphs);
+    editor.commands.setTextSelection(3);
+    editor.view.dom.dispatchEvent(new FocusEvent("focus"));
+    const create = vi.spyOn(DecorationSet, "create");
+
+    editor.commands.setTextSelection(10);
+    editor.view.dom.dispatchEvent(new FocusEvent("blur"));
+    editor.view.dom.dispatchEvent(new FocusEvent("focus"));
+
+    expect(
+      create.mock.calls.filter(([, decorations]) =>
+        decorations.some(
+          (decoration) => decoration.spec.className === "marker",
+        ),
+      ),
+    ).toEqual([]);
+    expect(markerPositions(editor)).toEqual([1, 4]);
+    editor.destroy();
+  });
+
+  it("keeps the caret line plain while typing on it", () => {
+    const editor = markerEditor(twoMarkedParagraphs);
+    editor.commands.setTextSelection(3);
+    editor.view.dom.dispatchEvent(new FocusEvent("focus"));
+
+    editor.commands.insertContent("x");
+
+    expect(promptEditorValueFromDoc(editor.state.doc).text).toBe(
+      "**xa**\n**b**",
+    );
+    expect(markerPositions(editor)).toEqual([9, 12]);
+    editor.destroy();
+  });
+
+  it("finds the caret line inside a quote with a hard break", () => {
+    const editor = markerEditor({
+      type: "doc",
+      content: [
+        {
+          type: "blockquote",
+          content: [
+            {
+              type: "paragraph",
+              content: [
+                { type: "text", text: "**a**" },
+                { type: "hardBreak" },
+                { type: "text", text: "**b**" },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    editor.commands.setTextSelection(10);
+    editor.view.dom.dispatchEvent(new FocusEvent("focus"));
+
+    expect(markerPositions(editor)).toEqual([2, 5]);
     editor.destroy();
   });
 

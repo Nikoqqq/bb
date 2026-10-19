@@ -51,6 +51,8 @@ export interface PromptDecorationExtensionOptions {
 
 interface PromptDecorationPluginState {
   decorations: DecorationSet | null;
+  caretRanges: CaretRangeDecorations[];
+  longestCaretRange: number;
   matched: PromptDecorationMatches;
   caretLines: PromptDecorationRange | null;
   focused: boolean;
@@ -184,7 +186,7 @@ interface PromptDecorationMatch {
 interface PromptDecorationMatches {
   serialization: PromptEditorSerialization;
   matches: PromptDecorationMatch[];
-  hasOffCaretLineRules: boolean;
+  hasCaretRules: boolean;
 }
 
 function matchDecorationRules(
@@ -199,7 +201,7 @@ function matchDecorationRules(
     ...sources,
   ];
   const matches: PromptDecorationMatch[] = [];
-  let hasOffCaretLineRules = false;
+  let hasCaretRules = false;
 
   for (const [sourceIndex, source] of orderedSources.entries()) {
     for (const [ruleIndex, rule] of source.effects.entries()) {
@@ -221,14 +223,14 @@ function matchDecorationRules(
         continue;
       }
       if (ranges.length === 0) continue;
-      if (rule.experimental_offCaretLineOnly === true) {
-        hasOffCaretLineRules = true;
+      if (rule.experimental_skipAtCaret === "line") {
+        hasCaretRules = true;
       }
       matches.push({ sourceIndex, ruleIndex, source, rule, ranges });
     }
   }
 
-  return { serialization, matches, hasOffCaretLineRules };
+  return { serialization, matches, hasCaretRules };
 }
 
 function promptCaretLines(
@@ -275,64 +277,152 @@ function firstSegmentEndingAfter(
   return low;
 }
 
+interface CaretRangeDecorations {
+  range: PromptDecorationRange;
+  decorations: Decoration[];
+}
+
+interface PromptDecorationPaint {
+  decorations: DecorationSet | null;
+  caretRanges: CaretRangeDecorations[];
+  longestCaretRange: number;
+}
+
+function rangeDecorations(
+  doc: ProseMirrorNode,
+  serialization: PromptEditorSerialization,
+  { sourceIndex, ruleIndex, source, rule }: PromptDecorationMatch,
+  range: PromptDecorationRange,
+): Decoration[] {
+  const decorations: Decoration[] = [];
+  const boundedRange = {
+    from: range.from,
+    to: Math.min(range.to, serialization.text.length),
+  };
+  const segments = serialization.offsetMapping;
+  for (
+    let index = firstSegmentEndingAfter(segments, boundedRange.from);
+    index < segments.length && segments[index]!.textFrom < boundedRange.to;
+    index += 1
+  ) {
+    const decoration = decorationForIntersection(
+      doc,
+      segments[index]!,
+      boundedRange,
+      rule.className,
+      {
+        className: rule.className,
+        ...(source.pluginId
+          ? { "data-bb-plugin-decoration": source.pluginId }
+          : {}),
+        ruleId: rule.id,
+        sourceId: source.id,
+        sourceOrder: `${sourceIndex}:${ruleIndex}`,
+      },
+    );
+    if (decoration !== null) decorations.push(decoration);
+  }
+  return decorations;
+}
+
 function paintDecorations(
   doc: ProseMirrorNode,
   matched: PromptDecorationMatches,
   caretLines: PromptDecorationRange | null,
-): DecorationSet | null {
+): PromptDecorationPaint {
   const { serialization } = matched;
   const decorations: Decoration[] = [];
+  const caretRanges: CaretRangeDecorations[] = [];
+  let longestCaretRange = 0;
 
-  for (const {
-    sourceIndex,
-    ruleIndex,
-    source,
-    rule,
-    ranges,
-  } of matched.matches) {
-    const hiddenLines =
-      rule.experimental_offCaretLineOnly === true ? caretLines : null;
-    for (const range of ranges) {
-      if (range.from >= serialization.text.length) {
+  for (const match of matched.matches) {
+    const skipsCaretLine = match.rule.experimental_skipAtCaret === "line";
+    for (const range of match.ranges) {
+      if (range.from >= serialization.text.length) continue;
+      const painted = rangeDecorations(doc, serialization, match, range);
+      if (!skipsCaretLine) {
+        decorations.push(...painted);
         continue;
       }
-      if (hiddenLines !== null && rangeTouchesLines(range, hiddenLines)) {
-        continue;
-      }
-      const boundedRange = {
-        from: range.from,
-        to: Math.min(range.to, serialization.text.length),
-      };
-      const segments = serialization.offsetMapping;
-      for (
-        let index = firstSegmentEndingAfter(segments, boundedRange.from);
-        index < segments.length && segments[index]!.textFrom < boundedRange.to;
-        index += 1
-      ) {
-        const segment = segments[index]!;
-        const decoration = decorationForIntersection(
-          doc,
-          segment,
-          boundedRange,
-          rule.className,
-          {
-            className: rule.className,
-            ...(source.pluginId
-              ? { "data-bb-plugin-decoration": source.pluginId }
-              : {}),
-            ruleId: rule.id,
-            sourceId: source.id,
-            sourceOrder: `${sourceIndex}:${ruleIndex}`,
-          },
-        );
-        if (decoration !== null) decorations.push(decoration);
+      caretRanges.push({ range, decorations: painted });
+      longestCaretRange = Math.max(longestCaretRange, range.to - range.from);
+      if (caretLines === null || !rangeTouchesLines(range, caretLines)) {
+        decorations.push(...painted);
       }
     }
   }
+  caretRanges.sort((left, right) => left.range.from - right.range.from);
 
-  return decorations.length === 0
-    ? null
-    : DecorationSet.create(doc, decorations);
+  return {
+    decorations:
+      decorations.length === 0 ? null : DecorationSet.create(doc, decorations),
+    caretRanges,
+    longestCaretRange,
+  };
+}
+
+function caretRangesTouching(
+  paint: Pick<PromptDecorationPaint, "caretRanges" | "longestCaretRange">,
+  lines: PromptDecorationRange,
+): CaretRangeDecorations[] {
+  const { caretRanges } = paint;
+  let low = 0;
+  let high = caretRanges.length;
+  const earliestStart = lines.from - paint.longestCaretRange;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (caretRanges[middle]!.range.from < earliestStart) low = middle + 1;
+    else high = middle;
+  }
+  const touching: CaretRangeDecorations[] = [];
+  for (
+    let index = low;
+    index < caretRanges.length && caretRanges[index]!.range.from <= lines.to;
+    index += 1
+  ) {
+    if (rangeTouchesLines(caretRanges[index]!.range, lines)) {
+      touching.push(caretRanges[index]!);
+    }
+  }
+  return touching;
+}
+
+function moveCaretLines(
+  doc: ProseMirrorNode,
+  previous: Pick<
+    PromptDecorationPluginState,
+    "decorations" | "caretRanges" | "longestCaretRange" | "caretLines"
+  >,
+  caretLines: PromptDecorationRange | null,
+): DecorationSet | null {
+  const hide =
+    caretLines === null
+      ? []
+      : caretRangesTouching(previous, caretLines).filter(
+          ({ range }) =>
+            previous.caretLines === null ||
+            !rangeTouchesLines(range, previous.caretLines),
+        );
+  const reveal =
+    previous.caretLines === null
+      ? []
+      : caretRangesTouching(previous, previous.caretLines).filter(
+          ({ range }) =>
+            caretLines === null || !rangeTouchesLines(range, caretLines),
+        );
+  let decorations = previous.decorations ?? DecorationSet.empty;
+  if (hide.length > 0) {
+    decorations = decorations.remove(
+      hide.flatMap((entry) => entry.decorations),
+    );
+  }
+  if (reveal.length > 0) {
+    decorations = decorations.add(
+      doc,
+      reveal.flatMap((entry) => entry.decorations),
+    );
+  }
+  return decorations === DecorationSet.empty ? null : decorations;
 }
 
 function caretLinesFor(
@@ -340,7 +430,7 @@ function caretLinesFor(
   matched: PromptDecorationMatches,
   focused: boolean,
 ): PromptDecorationRange | null {
-  return focused && matched.hasOffCaretLineRules
+  return focused && matched.hasCaretRules
     ? promptCaretLines(state, matched.serialization.text)
     : null;
 }
@@ -439,7 +529,7 @@ export const PromptDecorationExtension =
                 options.onRuleError,
               );
               return {
-                decorations: paintDecorations(state.doc, matched, null),
+                ...paintDecorations(state.doc, matched, null),
                 matched,
                 caretLines: null,
                 focused: false,
@@ -480,9 +570,9 @@ export const PromptDecorationExtension =
                 }
                 return {
                   ...previous,
-                  decorations: paintDecorations(
+                  decorations: moveCaretLines(
                     newState.doc,
-                    previous.matched,
+                    previous,
                     caretLines,
                   ),
                   caretLines,
@@ -512,11 +602,7 @@ export const PromptDecorationExtension =
               );
               const caretLines = caretLinesFor(newState, matched, focused);
               return {
-                decorations: paintDecorations(
-                  newState.doc,
-                  matched,
-                  caretLines,
-                ),
+                ...paintDecorations(newState.doc, matched, caretLines),
                 matched,
                 caretLines,
                 focused,

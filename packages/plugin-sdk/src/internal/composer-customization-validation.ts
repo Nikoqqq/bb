@@ -332,20 +332,17 @@ function parseRegions(
             "className",
             entry?.className,
           );
-          const offCaretLineOnly = entry?.experimental_offCaretLineOnly;
-          if (
-            offCaretLineOnly !== undefined &&
-            typeof offCaretLineOnly !== "boolean"
-          ) {
+          const skipAtCaret = entry?.experimental_skipAtCaret;
+          if (skipAtCaret !== undefined && skipAtCaret !== "line") {
             throw new Error(
-              `${entryKind}: "experimental_offCaretLineOnly" must be a boolean when set`,
+              `${entryKind}: "experimental_skipAtCaret" must be "line" when set`,
             );
           }
           const shared = {
             id,
             className,
-            ...(offCaretLineOnly === true
-              ? { experimental_offCaretLineOnly: true }
+            ...(skipAtCaret === "line"
+              ? { experimental_skipAtCaret: "line" as const }
               : {}),
           };
           return {
