@@ -286,7 +286,7 @@ ids, account details, prompts, project or file names, terminal output, error
 messages, or session ids. Sign-in `exited` means the command exited before
 readiness was observed, not that authentication succeeded; `new_thread_submit`
 `accepted` means the thread was created, not that the provider answered.
-`BB_FF_AGENT_INSTALL_TELEMETRY=true` (off by default) additionally sends
+bb also sends (on by default; `BB_FF_AGENT_INSTALL_TELEMETRY=false` turns them off)
 `agent_install_started` and `agent_install_finished` when Setup installs a
 built-in agent. Both carry `provider` (its provider id, such as `claude-code`,
 `codex`, or `pi`; agents from other plugins are not reported) and

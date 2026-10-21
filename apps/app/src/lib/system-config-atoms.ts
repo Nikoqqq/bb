@@ -41,7 +41,7 @@ const unavailableSystemConfig: SystemConfigResponse = {
   pluginThemes: [],
   featureFlags: {
     placeholder: false,
-    agentInstallTelemetry: false,
+    agentInstallTelemetry: true,
     timelineWindowEventBudget: 1_500,
   },
   hostDaemonPort: null,

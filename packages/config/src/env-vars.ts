@@ -312,7 +312,7 @@ export const BB_FF_PLACEHOLDER_ENV = defineEnvVar<boolean>({
 
 export const BB_FF_AGENT_INSTALL_TELEMETRY_ENV = defineEnvVar<boolean>({
   description:
-    "Send the anonymous agent_install_started and agent_install_finished telemetry events (provider, install_method, outcome) when Setup installs a built-in agent. Off by default.",
+    "Send the anonymous agent_install_started and agent_install_finished telemetry events (provider, install_method, outcome) when Setup installs a built-in agent. On by default; set to false to stop sending them.",
   name: "BB_FF_AGENT_INSTALL_TELEMETRY",
   parse: parseBooleanEnvValue,
 });

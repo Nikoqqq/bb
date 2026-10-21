@@ -45,11 +45,11 @@ function capture(args: {
 }
 
 describe("agent install telemetry", () => {
-  it("is off by default and sends nothing", () => {
-    expect(defaultFeatureFlags.agentInstallTelemetry).toBe(false);
+  it("is on by default, and switching it off sends nothing", () => {
+    expect(defaultFeatureFlags.agentInstallTelemetry).toBe(true);
     expect(
       capture({
-        enabled: defaultFeatureFlags.agentInstallTelemetry,
+        enabled: false,
         providerId: "pi",
         events: installEvents("pi", "npm install -g pkg@latest", true),
       }),
