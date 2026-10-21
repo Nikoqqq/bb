@@ -32,6 +32,7 @@ import {
   claimEnvironmentPath,
   createEnvironment,
   environments,
+  environmentHookOperations,
   getEnvironment,
   getPreparingEnvironment,
   getThread,
@@ -2574,4 +2575,50 @@ describe("worktree adoption cleanup", () => {
           });
       }),
   );
+});
+
+
+it.each([false, true])("bounds ambiguous setup cleanup retries with a persisted hook=%s", async (persisted) => {
+  await withTestHarness(async (harness) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const remove = vi.fn(async () => ({ status: "removed" as const }));
+    const fixture = setup(harness, { remove });
+    const cancel = vi.fn(async () => ({ status: "unknown" as const }));
+    registerTestHostRpcCapture(harness.deps, {
+      hostId: fixture.host.id,
+      sessionId: fixture.session.id,
+      onEnvironmentHookCancel: cancel,
+    });
+    fixture.ask();
+    await fixture.settled();
+    const row = fixture.row();
+    const hookId = `environment:${row.id}:${row.environmentProviderInstanceKey}:setup`;
+    if (persisted) harness.db.insert(environmentHookOperations).values({
+      id: hookId, operationId: hookId, hostId: fixture.host.id,
+      path: row.path!, kind: "setup", startedAt: Date.now() - 60_000,
+    }).run();
+    await expect(cancelProviderEnvironmentCreation(harness.deps, fixture.thread.id)).rejects.toThrow();
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      const failed = fixture.row();
+      expect(failed.teardownStatus).toBe("failed");
+      expect(failed.teardownAttempt).toBe(attempt);
+      expect(cancel).toHaveBeenCalledTimes(attempt);
+      await sweepProviderLifecycles(harness.deps);
+      expect(cancel).toHaveBeenCalledTimes(attempt);
+      if (attempt < 5) {
+        expect(failed.retireAt).toBe(Date.now() + 60_000 * 2 ** (attempt - 1));
+        vi.setSystemTime(failed.retireAt!);
+        await sweepProviderLifecycles(harness.deps);
+      }
+    }
+    expect(fixture.row()).toMatchObject({ retireAt: null, teardownMessage: expect.stringContaining("Needs recovery") });
+    vi.setSystemTime(Date.now() + 86_400_000);
+    await sweepProviderLifecycles(harness.deps);
+    expect(cancel).toHaveBeenCalledTimes(5);
+    expect(remove).not.toHaveBeenCalled();
+    if (persisted) expect(harness.db.select().from(environmentHookOperations).where(eq(environmentHookOperations.id, hookId)).get()?.finishedAt).toBeNull();
+    const response = await harness.app.request(`/api/v1/environments/${row.id}/cleanup`, { method: "POST" });
+    expect(response.status).toBe(409);
+    expect(await response.text()).toContain("--recover");
+  });
 });
