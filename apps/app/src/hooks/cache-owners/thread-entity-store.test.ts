@@ -1,0 +1,210 @@
+import type { ThreadListEntry } from "@bb/domain";
+import type { SidebarBootstrapResponse } from "@bb/server-contract";
+import { makeThreadListEntry as makeEntry } from "@bb/test-helpers/domain-fixtures";
+import { describe, expect, it } from "vitest";
+import {
+  makeProjectWithThreadsResponse,
+  makeSidebarBootstrapResponse,
+} from "@/test/fixtures/projects";
+import { createQueryClientTestHarness } from "@/test/queryClientTestHarness";
+import {
+  sidebarNavigationQueryKey,
+  threadEntityQueryKey,
+  threadListQueryKey,
+  threadQueryKey,
+} from "../queries/query-keys";
+import { updateCachedThreadListStatusState } from "./query-cache";
+import {
+  acknowledgeThreadEntities,
+  beginThreadEntityPrediction,
+} from "./thread-entity-store";
+import {
+  beginArchiveThreadAndChildrenTransaction,
+  predictThreadPinState,
+  rollbackArchiveThreadsTransaction,
+  settleArchiveThreadsTransaction,
+} from "./thread-state-cache-owner";
+
+const entry = (id: string, overrides: Partial<ThreadListEntry> = {}) =>
+  makeEntry({
+    id,
+    projectId: "project-1",
+    status: "idle",
+    pinnedAt: null,
+    archivedAt: null,
+    updatedAt: 10,
+    ...overrides,
+  });
+
+function setup(rows: ThreadListEntry[]) {
+  const { queryClient } = createQueryClientTestHarness();
+  const sidebar = (threads: ThreadListEntry[]): SidebarBootstrapResponse =>
+    makeSidebarBootstrapResponse({
+      projects: [makeProjectWithThreadsResponse({ id: "project-1", threads })],
+    });
+  queryClient.setQueryData(sidebarNavigationQueryKey(), sidebar(rows));
+  const listKey = threadListQueryKey({
+    projectId: "project-1",
+    archived: false,
+  });
+  const lateKey = threadListQueryKey({ archived: false, limit: 50 });
+  const sidebarRows = () =>
+    queryClient.getQueryData<SidebarBootstrapResponse>(
+      sidebarNavigationQueryKey(),
+    )?.projects[0]?.threads ?? [];
+  const listRows = (key = listKey) =>
+    queryClient.getQueryData<ThreadListEntry[]>(key) ?? [];
+  const describeRows = (rows: ThreadListEntry[]) =>
+    rows.map((row) => `${row.id}:${row.pinnedAt}:${row.status}`);
+  const fetchList = (key: typeof listKey, rows: () => ThreadListEntry[]) =>
+    queryClient.fetchQuery({
+      queryKey: key,
+      queryFn: async () => structuredClone(rows()),
+      staleTime: 0,
+    });
+  return {
+    queryClient,
+    listKey,
+    lateKey,
+    sidebarRows,
+    listRows,
+    describeRows,
+    fetchList,
+  };
+}
+
+describe("thread entity store", () => {
+  it("keeps a pin and a mid-save status patch in every view, including a list that loads while pending, and rolls back only the pin", async () => {
+    const server = [entry("t1"), entry("t2")];
+    const s = setup(server);
+    await s.fetchList(s.listKey, () => server);
+    s.queryClient.setQueryData(threadQueryKey("t1"), {
+      ...server[0],
+      queuedMessageCount: 0,
+    });
+    const pin = beginThreadEntityPrediction(
+      s.queryClient,
+      predictThreadPinState({ pinnedAt: 5, threadId: "t1" }),
+    );
+    updateCachedThreadListStatusState(s.queryClient, "t1", {
+      status: "active",
+      runtime: { displayStatus: "active" },
+      activity: server[0]!.activity,
+      latestAttentionAt: 20,
+      updatedAt: 11,
+    });
+    await s.fetchList(s.lateKey, () => server);
+
+    expect(s.describeRows(s.sidebarRows())).toEqual([
+      "t1:5:active",
+      "t2:null:idle",
+    ]);
+    expect(s.describeRows(s.listRows(s.lateKey))).toEqual([
+      "t1:5:active",
+      "t2:null:idle",
+    ]);
+    expect(
+      s.queryClient.getQueryData<ThreadListEntry>(threadQueryKey("t1")),
+    ).toMatchObject({ pinnedAt: 5, status: "active" });
+
+    pin.fail();
+    for (const rows of [
+      s.sidebarRows(),
+      s.listRows(),
+      s.listRows(s.lateKey),
+    ])
+      expect(s.describeRows(rows)).toEqual(["t1:null:active", "t2:null:idle"]);
+    expect(
+      s.queryClient.getQueryData<ThreadListEntry>(threadQueryKey("t1")),
+    ).toMatchObject({ pinnedAt: null, status: "active" });
+  });
+
+  it("does not leak a failed prediction through a write that both adds a row and edits the predicted one", async () => {
+    const s = setup([]);
+    await s.fetchList(s.listKey, () => [entry("t1")]);
+    const pin = beginThreadEntityPrediction(
+      s.queryClient,
+      predictThreadPinState({ pinnedAt: 5, threadId: "t1" }),
+    );
+    const visible = s.listRows();
+    s.queryClient.setQueryData(s.listKey, [
+      entry("t0"),
+      ...visible.map((row) => ({ ...row, status: "active" as const })),
+    ]);
+    pin.fail();
+    expect(s.describeRows(s.listRows())).toEqual([
+      "t0:null:idle",
+      "t1:null:active",
+    ]);
+  });
+
+  it("ignores a read that started before the write was acknowledged and accepts one that started after", async () => {
+    const server = [entry("t1")];
+    const s = setup(server);
+    await s.fetchList(s.listKey, () => server);
+    const pin = beginThreadEntityPrediction(
+      s.queryClient,
+      predictThreadPinState({ pinnedAt: 5, threadId: "t1" }),
+    );
+    let releaseStale!: () => void;
+    const stale = s.queryClient.fetchQuery({
+      queryKey: s.lateKey,
+      queryFn: async () => {
+        const rows = structuredClone(server);
+        await new Promise<void>((resolve) => {
+          releaseStale = resolve;
+        });
+        return rows;
+      },
+    });
+    acknowledgeThreadEntities(s.queryClient, ["t1"]);
+    pin.succeed({ ...server[0], pinnedAt: 7 });
+    releaseStale();
+    await stale;
+    expect(s.describeRows(s.listRows(s.lateKey))).toEqual(["t1:7:idle"]);
+
+    await s.fetchList(s.lateKey, () => [entry("t1", { pinnedAt: 9 })]);
+    expect(s.describeRows(s.sidebarRows())).toEqual(["t1:9:idle"]);
+  });
+
+  it("hides an archived family from every active view and restores it in place on failure", async () => {
+    const server = [
+      entry("root"),
+      entry("child", { parentThreadId: "root" }),
+      entry("other"),
+    ];
+    const s = setup(server);
+    await s.fetchList(s.listKey, () => server);
+    const transaction = await beginArchiveThreadAndChildrenTransaction({
+      queryClient: s.queryClient,
+      threadId: "root",
+    });
+    await s.fetchList(s.lateKey, () => server);
+    const ids = (rows: ThreadListEntry[]) => rows.map((row) => row.id);
+    expect(ids(s.sidebarRows())).toEqual(["other"]);
+    expect(ids(s.listRows(s.lateKey))).toEqual(["other"]);
+
+    rollbackArchiveThreadsTransaction({
+      queryClient: s.queryClient,
+      transaction,
+    });
+    settleArchiveThreadsTransaction({
+      queryClient: s.queryClient,
+      response: undefined,
+      transaction,
+    });
+    expect(ids(s.sidebarRows())).toEqual(["root", "child", "other"]);
+    expect(ids(s.listRows())).toEqual(["root", "child", "other"]);
+    expect(ids(s.listRows(s.lateKey))).toEqual(["root", "child", "other"]);
+  });
+
+  it("drops an entity once no view holds it", async () => {
+    const s = setup([]);
+    await s.fetchList(s.listKey, () => [entry("t1")]);
+    expect(s.queryClient.getQueryData(threadEntityQueryKey("t1"))).toBeDefined();
+    s.queryClient.removeQueries({ queryKey: s.listKey });
+    expect(
+      s.queryClient.getQueryData(threadEntityQueryKey("t1")),
+    ).toBeUndefined();
+  });
+});

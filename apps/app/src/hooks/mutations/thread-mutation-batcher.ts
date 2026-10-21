@@ -1,5 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
-import { runTaggedMutation, type TaggedMutationOutcome } from "@bb/query-tags";
+import type { TaggedMutationOutcome } from "@bb/query-tags";
 import type {
   BbSdkAreas,
   ThreadMutationResult,
@@ -7,6 +7,11 @@ import type {
 } from "@bb/sdk";
 import { publicApiRoutes } from "@bb/server-contract";
 import { sdk } from "@/lib/sdk";
+import {
+  acknowledgeThreadEntities,
+  beginThreadEntityPrediction,
+  ensureThreadEntityStore,
+} from "../cache-owners/thread-entity-store";
 import {
   applyThreadMetadataBatchResult,
   beginThreadMetadataBatchTransaction,
@@ -44,6 +49,7 @@ export function createThreadMutationBatcher(
   threads: ThreadMutations,
   queryClient: QueryClient,
 ): ThreadMutations {
+  ensureThreadEntityStore(queryClient);
   let pending: PendingThreadMutation[] = [];
   let scheduled = false;
 
@@ -97,6 +103,11 @@ export function createThreadMutationBatcher(
     );
     transaction?.releasePendingPatches();
     const failure = results.find((result) => result.status === "rejected");
+    if (failure === undefined)
+      acknowledgeThreadEntities(
+        queryClient,
+        batch.map(({ threadId }) => threadId),
+      );
     const acknowledged = batch.map((request, index) => {
       if (request.operation === "update") return undefined;
       const result = results[index]!;
@@ -147,33 +158,23 @@ export function createThreadMutationBatcher(
     (operation: "pin" | "unpin") =>
     ({ threadId }: { threadId: string }) =>
       new Promise<ThreadMutationResult>((resolve, reject) => {
-        let settle!: (
-          outcome: Promise<TaggedMutationOutcome<ThreadMutationResult>>,
-        ) => void;
-        const outcome = new Promise<
-          TaggedMutationOutcome<ThreadMutationResult>
-        >((resolveOutcome) => {
-          settle = resolveOutcome;
-        });
-        const written = runTaggedMutation(
-          invalidateCoreTags(queryClient),
-          () => outcome,
-          {
-            client: queryClient,
-            optimistic: predictThreadPinState({
-              pinnedAt: operation === "pin" ? Date.now() : null,
-              threadId,
-            }),
-          },
-        ).then(
-          () => {},
-          () => {},
+        const prediction = beginThreadEntityPrediction(
+          queryClient,
+          predictThreadPinState({
+            pinnedAt: operation === "pin" ? Date.now() : null,
+            threadId,
+          }),
         );
-        const acknowledge = (
-          result: Promise<TaggedMutationOutcome<ThreadMutationResult>>,
+        const acknowledge = async (
+          outcome: Promise<TaggedMutationOutcome<ThreadMutationResult>>,
         ) => {
-          settle(result);
-          return written;
+          try {
+            const { result, invalidated } = await outcome;
+            prediction.succeed(result);
+            void invalidateCoreTags(queryClient)(invalidated);
+          } catch {
+            prediction.fail();
+          }
         };
         enqueue({ operation, threadId, acknowledge, resolve, reject });
       });

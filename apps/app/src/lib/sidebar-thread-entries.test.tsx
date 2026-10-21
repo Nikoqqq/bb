@@ -54,7 +54,15 @@ describe("sidebar thread entries", () => {
     queryClient.setQueryData(archivedThreadsListQueryKey({}), {
       pageParams: [0],
       pages: [
-        [{ ...active, title: "Stale archived copy", archivedAt: 42 }, archived],
+        [
+          {
+            ...active,
+            title: "Stale archived copy",
+            archivedAt: 42,
+            updatedAt: active.updatedAt - 1,
+          },
+          archived,
+        ],
       ],
     });
     render(<Entries threadIds={[active.id, archived.id, "thr_missing"]} />, {

@@ -146,6 +146,8 @@ describe("thread state cache owner", () => {
       });
       expect(queryClient.getQueryData(threadQueryKey(original.id))).toEqual({
         ...activeThread,
+        title: "Updated title",
+        latestAttentionAt: 200,
         lastReadAt,
       });
       expect(queryClient.getQueryData(listKey)).toEqual(
