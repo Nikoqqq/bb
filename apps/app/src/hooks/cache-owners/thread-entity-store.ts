@@ -109,18 +109,20 @@ const SIDEBAR: ViewFamily = {
   },
   rebuild(data, items) {
     if (!isRecord(data) || !isRecord(data.personalProject)) return data;
+    const personal = items.get("personal");
     const projects = Array.isArray(data.projects) ? data.projects : [];
     return {
       ...data,
-      personalProject: {
-        ...data.personalProject,
-        threads: items.get("personal") ?? [],
-      },
-      projects: projects.map((project: unknown, index) =>
-        isRecord(project)
-          ? { ...project, threads: items.get(`project:${index}`) ?? [] }
-          : project,
-      ),
+      personalProject:
+        personal === undefined
+          ? data.personalProject
+          : { ...data.personalProject, threads: personal },
+      projects: projects.map((project: unknown, index) => {
+        const threads = items.get(`project:${index}`);
+        return isRecord(project) && threads !== undefined
+          ? { ...project, threads }
+          : project;
+      }),
     };
   },
   ...ROW_ITEMS,
@@ -153,15 +155,16 @@ const THREAD_LISTS: ViewFamily = {
     return undefined;
   },
   rebuild(data, items) {
-    if (Array.isArray(data)) return items.get("rows") ?? [];
+    if (Array.isArray(data)) return items.get("rows") ?? data;
     if (isRecord(data) && Array.isArray(data.pages))
       return {
         ...data,
         pages: data.pages.map(
-          (_page: unknown, index) => items.get(`page:${index}`) ?? [],
+          (page: unknown, index) => items.get(`page:${index}`) ?? page,
         ),
       };
-    if (isRecord(data)) return { ...data, threads: items.get("threads") ?? [] };
+    const threads = items.get("threads");
+    if (isRecord(data) && threads !== undefined) return { ...data, threads };
     return data;
   },
   ...ROW_ITEMS,
@@ -186,8 +189,9 @@ const SEARCH: ViewFamily = {
     const next: Fields = { ...data };
     for (const key of ["active", "archived"]) {
       const group = data[key];
-      if (isRecord(group))
-        next[key] = { ...group, results: items.get(key) ?? [] };
+      const results = items.get(key);
+      if (isRecord(group) && results !== undefined)
+        next[key] = { ...group, results };
     }
     return next;
   },
@@ -270,15 +274,14 @@ interface ViewSkeleton {
   family: ViewFamily;
   data: unknown;
   slots: Map<string, ViewEntry[]>;
+  slotsById: Map<string, Set<string>>;
 }
 
-interface Materialized {
-  byId: Map<string, unknown>;
-  visibleBySlot: Map<string, Set<string>>;
-}
+type Materialized = Map<string, Map<string, unknown>>;
 
 interface ThreadEntityStore {
   client: QueryClient;
+  entities: Map<string, Query>;
   skeletons: Map<Query, ViewSkeleton>;
   viewsById: Map<string, Set<Query>>;
   materialized: WeakMap<Query, Materialized>;
@@ -297,7 +300,8 @@ function readEntity(
   store: ThreadEntityStore,
   id: string,
 ): ThreadEntity | undefined {
-  return store.client.getQueryData<ThreadEntity>(threadEntityQueryKey(id));
+  const data: unknown = store.entities.get(id)?.state.data;
+  return data as ThreadEntity | undefined;
 }
 
 function isNewer(
@@ -387,43 +391,64 @@ function materializeItem(
   return row;
 }
 
-function rematerialize(store: ThreadEntityStore, query: Query): void {
+function rematerialize(
+  store: ThreadEntityStore,
+  query: Query,
+  dirty?: ReadonlySet<string>,
+): void {
   const skeleton = store.skeletons.get(query);
   if (skeleton === undefined) return;
+  const previous = store.materialized.get(query);
+  const incremental = dirty !== undefined && previous !== undefined;
+  const slotKeys = new Set<string>();
+  if (incremental) {
+    for (const id of dirty)
+      for (const slot of skeleton.slotsById.get(id) ?? []) slotKeys.add(slot);
+  } else for (const slot of skeleton.slots.keys()) slotKeys.add(slot);
+  if (slotKeys.size === 0) return;
   const membership = skeleton.family.membership(query.queryKey);
   const items = new Map<string, unknown[]>();
-  const visibleBySlot = new Map<string, Set<string>>();
-  for (const [slot, entries] of skeleton.slots) {
-    const visible = new Set<string>();
+  const materialized: Materialized = new Map(previous);
+  for (const slot of slotKeys) {
+    const prior = previous?.get(slot);
+    const visible = new Map<string, unknown>();
     const rows: unknown[] = [];
-    for (const entry of entries) {
+    for (const entry of skeleton.slots.get(slot) ?? []) {
       if (entry.id === null) {
         rows.push(entry.item);
         continue;
       }
       const entity = readEntity(store, entry.id);
       if (entity !== undefined && !isMember(entity, membership)) continue;
-      visible.add(entry.id);
-      rows.push(
-        entity === undefined
+      const kept =
+        incremental && !dirty.has(entry.id) ? prior?.get(entry.id) : undefined;
+      const row =
+        kept ??
+        (entity === undefined
           ? entry.item
-          : materializeItem(store, skeleton.family, entry.item, entity),
-      );
+          : materializeItem(store, skeleton.family, entry.item, entity));
+      visible.set(entry.id, row);
+      rows.push(row);
     }
     items.set(slot, rows);
-    visibleBySlot.set(slot, visible);
+    materialized.set(slot, visible);
   }
-  const next = replaceEqualDeep(
-    query.state.data,
-    skeleton.family.rebuild(skeleton.data, items),
+  let next = skeleton.family.rebuild(
+    incremental ? query.state.data : skeleton.data,
+    items,
   );
-  const byId = new Map<string, unknown>();
-  for (const slot of skeleton.family.slots(next) ?? [])
-    for (const item of slot.items) {
-      const thread = skeleton.family.threadOf(item);
-      if (thread !== undefined) byId.set(String(thread.id), item);
+  if (!incremental) {
+    next = replaceEqualDeep(query.state.data, next);
+    for (const slot of skeleton.family.slots(next) ?? []) {
+      const visible = new Map<string, unknown>();
+      for (const item of slot.items) {
+        const thread = skeleton.family.threadOf(item);
+        if (thread !== undefined) visible.set(String(thread.id), item);
+      }
+      materialized.set(slot.key, visible);
     }
-  store.materialized.set(query, { byId, visibleBySlot });
+  }
+  store.materialized.set(query, materialized);
   if (next !== query.state.data) query.setState({ data: next });
 }
 
@@ -467,14 +492,31 @@ function skeletonIds(skeleton: ViewSkeleton | undefined): Set<string> {
   return ids;
 }
 
-function isHidden(entry: ViewEntry, visible: ReadonlySet<string>): boolean {
+function priorItem(
+  materialized: Materialized | undefined,
+  slot: string,
+  id: string,
+): unknown {
+  const same = materialized?.get(slot)?.get(id);
+  if (same !== undefined) return same;
+  for (const visible of materialized?.values() ?? []) {
+    const item = visible.get(id);
+    if (item !== undefined) return item;
+  }
+  return undefined;
+}
+
+function isHidden(
+  entry: ViewEntry,
+  visible: ReadonlyMap<string, unknown>,
+): boolean {
   return entry.id !== null && !visible.has(entry.id);
 }
 
 function keepHiddenEntries(
   previous: readonly ViewEntry[],
   next: ViewEntry[],
-  visible: ReadonlySet<string>,
+  visible: ReadonlyMap<string, unknown>,
 ): ViewEntry[] {
   if (!previous.some((entry) => isHidden(entry, visible))) return next;
   const result = [...next];
@@ -497,13 +539,20 @@ function batch(store: ThreadEntityStore, run: () => void): void {
     store.batching--;
   }
   if (store.batching > 0) return;
-  const views = new Set(store.dirtyViews);
+  const full = new Set(store.dirtyViews);
+  const partial = new Map<Query, Set<string>>();
   for (const id of store.dirtyIds)
-    for (const view of store.viewsById.get(id) ?? []) views.add(view);
+    for (const view of store.viewsById.get(id) ?? []) {
+      if (full.has(view)) continue;
+      const ids = partial.get(view) ?? new Set<string>();
+      ids.add(id);
+      partial.set(view, ids);
+    }
   store.dirtyIds.clear();
   store.dirtyViews.clear();
   notifyManager.batch(() => {
-    for (const view of views) rematerialize(store, view);
+    for (const view of full) rematerialize(store, view);
+    for (const [view, ids] of partial) rematerialize(store, view, ids);
   });
 }
 
@@ -526,6 +575,7 @@ function onViewWritten(
     : (store.fetchStartedAt.get(query) ?? 0);
   batch(store, () => {
     const nextSlots = new Map<string, ViewEntry[]>();
+    const slotsById = new Map<string, Set<string>>();
     for (const slot of slots) {
       const entries: ViewEntry[] = [];
       for (const item of slot.items) {
@@ -536,7 +586,7 @@ function onViewWritten(
         }
         const id = String(thread.id);
         entries.push({ id, item });
-        const prior = materialized?.byId.get(id);
+        const prior = priorItem(materialized, slot.key, id);
         const priorThread =
           prior === undefined ? undefined : family.threadOf(prior);
         if (priorThread !== undefined) {
@@ -545,15 +595,20 @@ function onViewWritten(
         } else ingest(store, id, family.facet, thread, readStart);
       }
       const previousEntries = previous?.slots.get(slot.key);
-      const visible = materialized?.visibleBySlot.get(slot.key);
-      nextSlots.set(
-        slot.key,
+      const visible = materialized?.get(slot.key);
+      const kept =
         previousEntries !== undefined && visible !== undefined
           ? keepHiddenEntries(previousEntries, entries, visible)
-          : entries,
-      );
+          : entries;
+      nextSlots.set(slot.key, kept);
+      for (const { id } of kept) {
+        if (id === null) continue;
+        const slotKeys = slotsById.get(id) ?? new Set<string>();
+        slotKeys.add(slot.key);
+        slotsById.set(id, slotKeys);
+      }
     }
-    setSkeleton(store, query, { family, data, slots: nextSlots });
+    setSkeleton(store, query, { family, data, slots: nextSlots, slotsById });
     store.dirtyViews.add(query);
   });
 }
@@ -562,6 +617,7 @@ export function ensureThreadEntityStore(client: QueryClient): void {
   if (stores.has(client)) return;
   const store: ThreadEntityStore = {
     client,
+    entities: new Map(),
     skeletons: new Map(),
     viewsById: new Map(),
     materialized: new WeakMap(),
@@ -581,15 +637,19 @@ export function ensureThreadEntityStore(client: QueryClient): void {
   client.getQueryCache().subscribe((event) => {
     const { query } = event;
     if (query.queryKey[0] === entityHead) {
-      if (event.type !== "updated") return;
       const id = String(query.queryKey[1]);
+      if (event.type === "added") store.entities.set(id, query);
+      if (event.type === "removed" && store.entities.get(id) === query)
+        store.entities.delete(id);
+      if (event.type !== "updated") return;
       if (store.batching > 0) {
         store.dirtyIds.add(id);
         return;
       }
+      const dirty = new Set([id]);
       notifyManager.batch(() => {
         for (const view of store.viewsById.get(id) ?? [])
-          rematerialize(store, view);
+          rematerialize(store, view, dirty);
       });
       return;
     }
@@ -612,6 +672,24 @@ export function ensureThreadEntityStore(client: QueryClient): void {
     if (family !== undefined && query.state.data !== undefined)
       onViewWritten(store, query, family, true);
   }
+}
+
+export function patchThreadEntity(
+  client: QueryClient,
+  threadId: string,
+  change: Fields,
+  updatedAt?: number,
+): void {
+  ensureThreadEntityStore(client);
+  const threadFields = pick(change, THREAD_KEYS);
+  const listFields = pick(change, FACET_KEYS.list);
+  client.setQueryData<ThreadEntity>(threadEntityQueryKey(threadId), (current) =>
+    current === undefined ||
+    (updatedAt !== undefined &&
+      (current.thread.updatedAt ?? Number.NEGATIVE_INFINITY) > updatedAt)
+      ? current
+      : mergeEntity(current, threadFields, "list", listFields),
+  );
 }
 
 export function acknowledgeThreadEntities(

@@ -39,6 +39,7 @@ import {
   type ArchivedThreadsListFilters,
   type ThreadListQueryFilters,
 } from "../queries/query-keys";
+import { patchThreadEntity } from "./thread-entity-store";
 
 type TimelineRowsUpdater = (
   rows: readonly TimelineRow[],
@@ -707,14 +708,7 @@ export function updateCachedThreadListPendingInteractionState(
   threadId: string,
   hasPendingInteraction: boolean,
 ): void {
-  applyToCachedThreadListsAndSidebarNavigation(queryClient, (list) => {
-    if (!list.some((thread) => thread.id === threadId)) {
-      return list;
-    }
-    return list.map((thread) =>
-      thread.id === threadId ? { ...thread, hasPendingInteraction } : thread,
-    );
-  });
+  patchThreadEntity(queryClient, threadId, { hasPendingInteraction });
 }
 
 export function updateCachedThreadListStatusState(
@@ -722,16 +716,7 @@ export function updateCachedThreadListStatusState(
   threadId: string,
   statusChange: ThreadStatusChangeMetadata,
 ): void {
-  applyToCachedThreadListsAndSidebarNavigation(queryClient, (list) => {
-    if (!list.some((thread) => thread.id === threadId)) {
-      return list;
-    }
-    return list.map((thread) =>
-      thread.id === threadId && statusChange.updatedAt >= thread.updatedAt
-        ? { ...thread, ...statusChange }
-        : thread,
-    );
-  });
+  patchThreadEntity(queryClient, threadId, statusChange, statusChange.updatedAt);
 }
 
 export function updateCachedThreadStatusState(
@@ -739,10 +724,11 @@ export function updateCachedThreadStatusState(
   threadId: string,
   { status, runtime, latestAttentionAt, updatedAt }: ThreadStatusChangeMetadata,
 ): void {
-  updateCachedThread(queryClient, threadId, (thread) =>
-    updatedAt < thread.updatedAt
-      ? thread
-      : { ...thread, status, runtime, latestAttentionAt, updatedAt },
+  patchThreadEntity(
+    queryClient,
+    threadId,
+    { status, runtime, latestAttentionAt, updatedAt },
+    updatedAt,
   );
 }
 

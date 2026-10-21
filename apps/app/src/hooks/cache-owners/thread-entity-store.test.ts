@@ -198,6 +198,35 @@ describe("thread entity store", () => {
     expect(ids(s.listRows(s.lateKey))).toEqual(["root", "child", "other"]);
   });
 
+  it("applies a status update to a thread hidden by a pending archive, so rollback shows the latest status", async () => {
+    const server = [entry("t1"), entry("t2")];
+    const s = setup(server);
+    const transaction = await beginArchiveThreadAndChildrenTransaction({
+      queryClient: s.queryClient,
+      threadId: "t1",
+    });
+    for (const [status, updatedAt] of [
+      ["active", 11],
+      ["idle", 12],
+    ] as const)
+      updateCachedThreadListStatusState(s.queryClient, "t1", {
+        status,
+        runtime: { displayStatus: status },
+        activity: server[0]!.activity,
+        latestAttentionAt: updatedAt,
+        updatedAt,
+      });
+    expect(s.describeRows(s.sidebarRows())).toEqual(["t2:null:idle"]);
+    rollbackArchiveThreadsTransaction({
+      queryClient: s.queryClient,
+      transaction,
+    });
+    expect(s.sidebarRows().map((row) => [row.id, row.status, row.updatedAt])).toEqual([
+      ["t1", "idle", 12],
+      ["t2", "idle", 10],
+    ]);
+  });
+
   it("drops an entity once no view holds it", async () => {
     const s = setup([]);
     await s.fetchList(s.listKey, () => [entry("t1")]);
