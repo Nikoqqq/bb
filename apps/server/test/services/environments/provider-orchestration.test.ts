@@ -2604,9 +2604,13 @@ describe("worktree adoption cleanup", () => {
   );
 });
 
-it.each([false, true])(
-  "bounds ambiguous setup cleanup retries with a persisted hook=%s",
-  async (persisted) => {
+it.each([
+  { persisted: false, attached: false },
+  { persisted: true, attached: false },
+  { persisted: false, attached: true },
+])(
+  "bounds ambiguous setup cleanup retries with %j",
+  async ({ persisted, attached }) => {
     await withTestHarness(async (harness) => {
       vi.useFakeTimers({ toFake: ["Date"] });
       const remove = vi.fn(async () => ({ status: "removed" as const }));
@@ -2633,9 +2637,24 @@ it.each([false, true])(
             startedAt: Date.now() - 60_000,
           })
           .run();
-      await expect(
-        cancelProviderEnvironmentCreation(harness.deps, fixture.thread.id),
-      ).rejects.toThrow();
+      if (attached) {
+        fixture.attach();
+        harness.db
+          .update(environments)
+          .set({ status: "error", retireAt: Date.now() })
+          .where(eq(environments.id, row.id))
+          .run();
+        harness.db
+          .update(threads)
+          .set({ status: "failed", archivedAt: Date.now() })
+          .where(eq(threads.id, fixture.thread.id))
+          .run();
+        await sweepProviderEnvironment(harness.deps, row.id);
+      } else {
+        await expect(
+          cancelProviderEnvironmentCreation(harness.deps, fixture.thread.id),
+        ).rejects.toThrow();
+      }
       for (let attempt = 1; attempt <= 5; attempt++) {
         const failed = fixture.row();
         expect(failed.teardownStatus).toBe("failed");

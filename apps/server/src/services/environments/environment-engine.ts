@@ -938,7 +938,20 @@ async function sweepProviderEnvironmentInSlot(
     teardownMessage: null,
   });
   try {
-    if (cancelled && row.providerOwnsPath && row.path !== null) {
+    const setupUnresolved =
+      cancelled ||
+      ((row.status === "provisioning" || row.status === "error") &&
+        deps.db
+          .select({ id: environmentHookOperations.id })
+          .from(environmentHookOperations)
+          .where(
+            eq(
+              environmentHookOperations.id,
+              `environment:${row.id}:${row.environmentProviderInstanceKey}:teardown`,
+            ),
+          )
+          .get() === undefined);
+    if (setupUnresolved && row.providerOwnsPath && row.path !== null) {
       await cancelPendingEnvironmentHook(deps, {
         id: `environment:${row.id}:${row.environmentProviderInstanceKey}:setup`,
         hostId: row.hostId,
