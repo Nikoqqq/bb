@@ -1790,6 +1790,28 @@ export const hostDaemonCommandRegistry = {
     flushEventsBeforeResult: false,
     envLane: null,
   }),
+  "environment.inspect_cleanup": defineHostDaemonCommandDescriptor({
+    type: "environment.inspect_cleanup",
+    schema: z
+      .object({
+        type: z.literal("environment.inspect_cleanup"),
+        environmentId: z.string().min(1),
+        path: z.string().min(1),
+      })
+      .strict(),
+    resultSchema: z
+      .object({
+        supported: z.boolean(),
+        active: z.boolean(),
+        pids: z.array(z.number().int().positive()),
+        unreadablePids: z.array(z.number().int().positive()),
+      })
+      .strict(),
+    transport: "onlineRpc",
+    retryable: true,
+    flushEventsBeforeResult: false,
+    envLane: null,
+  }),
   "environment.hook.cancel": defineHostDaemonCommandDescriptor({
     type: "environment.hook.cancel",
     schema: environmentHookCancelCommandSchema,

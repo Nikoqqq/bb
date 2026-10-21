@@ -5,6 +5,7 @@ import { operationEnvironment } from "./operation-environment.js";
 import {
   runEnvironmentHook,
   cancelEnvironmentHook,
+  inspectEnvironmentCleanup,
 } from "./command-handlers/environment-hook.js";
 import {
   providerCliInstallEventSchema,
@@ -607,6 +608,7 @@ const commandHandlers: CommandHandlerMap = {
 const onlineRpcHandlers: OnlineRpcHandlerMap = {
   "environment.hook.run": runEnvironmentHook,
   "environment.hook.cancel": cancelEnvironmentHook,
+  "environment.inspect_cleanup": inspectEnvironmentCleanup,
   "desktop.browser.list_instances": forwardDesktopBrowserCommand,
   "desktop.browser.list_tabs": forwardDesktopBrowserCommand,
   "desktop.browser.create_tab": forwardDesktopBrowserCommand,

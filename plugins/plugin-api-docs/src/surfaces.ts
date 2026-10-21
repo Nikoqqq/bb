@@ -1334,6 +1334,7 @@ export const SURFACE_GROUPS: SurfaceGroup[] = [
           "Have the threads it creates attributed to the plugin",
           "Start plugin updates in the background and follow their progress or rollback",
           "Read Viewed state for up to 500 file paths; mark and clear return acknowledgements",
+          "Recover failed environment cleanup after inspection with experimental_cleanup({ environmentId, recover: true }); Linux checks same-user cwd and mapped paths, while other users require separate inspection",
         ],
         apiSymbols: [
           "BbPluginApi",

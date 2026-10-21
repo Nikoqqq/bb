@@ -133,6 +133,7 @@ function assertHostActiveForRead(
     args.command.type === "thread.stop" ||
     args.command.type === "thread.storage.delete" ||
     args.command.type === "environment.hook.cancel" ||
+    args.command.type === "environment.inspect_cleanup" ||
     args.command.type === "plugin.host.cancel" ||
     args.command.type === "plugin.host.dispose"
   ) {

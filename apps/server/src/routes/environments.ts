@@ -1,5 +1,8 @@
 import { joinHostPathSegments } from "../services/lib/host-path.js";
-import { cleanupEnvironment } from "../services/environments/environment-engine.js";
+import {
+  cleanupEnvironment,
+  recoverEnvironmentCleanup,
+} from "../services/environments/environment-engine.js";
 import { parsePaginationQuery } from "../services/lib/validation.js";
 import {
   clearDiffViewedFiles,
@@ -318,7 +321,7 @@ export function registerEnvironmentRoutes(app: Hono, deps: AppDeps): void {
     onValidationError: (msg) => new ApiError(400, "invalid_request", msg),
   });
   const routes = publicApiRoutes.environments;
-  post(routes.cleanup, (context) => {
+  post(routes.cleanup, async (context, query) => {
     const environment = requireEnvironment(deps.db, context.req.param("id"));
     if (
       countLiveThreadsInEnvironment(deps.db, {
@@ -330,6 +333,10 @@ export function registerEnvironmentRoutes(app: Hono, deps: AppDeps): void {
         "invalid_request",
         "Environment still has live threads",
       );
+    if (query?.recover === "true") {
+      await recoverEnvironmentCleanup(deps, environment.id);
+      return context.json({ ok: true } as const);
+    }
     if (!cleanupEnvironment(deps, environment.id))
       throw new ApiError(
         409,

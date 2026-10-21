@@ -8,6 +8,7 @@ import {
 } from "../../../src/services/threads/thread-environment-placement.js";
 import { withEnvironmentCleanupSlot } from "../../../src/services/environments/cleanup-concurrency.js";
 import { reportEnvironmentHookProgress } from "../../../src/services/environments/environment-hooks.js";
+import { registerHostRpcResponder } from "../../helpers/host-rpc.js";
 import { registerTestHostRpcCapture } from "../../helpers/commands.js";
 import { recordProvisionedEnvironmentWorkspace } from "@bb/db/internal-environment-lifecycle";
 import { createThreadFromRequest } from "../../../src/services/threads/thread-create.js";
@@ -2577,48 +2578,160 @@ describe("worktree adoption cleanup", () => {
   );
 });
 
-
-it.each([false, true])("bounds ambiguous setup cleanup retries with a persisted hook=%s", async (persisted) => {
-  await withTestHarness(async (harness) => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    const remove = vi.fn(async () => ({ status: "removed" as const }));
-    const fixture = setup(harness, { remove });
-    const cancel = vi.fn(async () => ({ status: "unknown" as const }));
-    registerTestHostRpcCapture(harness.deps, {
-      hostId: fixture.host.id,
-      sessionId: fixture.session.id,
-      onEnvironmentHookCancel: cancel,
-    });
-    fixture.ask();
-    await fixture.settled();
-    const row = fixture.row();
-    const hookId = `environment:${row.id}:${row.environmentProviderInstanceKey}:setup`;
-    if (persisted) harness.db.insert(environmentHookOperations).values({
-      id: hookId, operationId: hookId, hostId: fixture.host.id,
-      path: row.path!, kind: "setup", startedAt: Date.now() - 60_000,
-    }).run();
-    await expect(cancelProviderEnvironmentCreation(harness.deps, fixture.thread.id)).rejects.toThrow();
-    for (let attempt = 1; attempt <= 5; attempt++) {
-      const failed = fixture.row();
-      expect(failed.teardownStatus).toBe("failed");
-      expect(failed.teardownAttempt).toBe(attempt);
-      expect(cancel).toHaveBeenCalledTimes(attempt);
-      await sweepProviderLifecycles(harness.deps);
-      expect(cancel).toHaveBeenCalledTimes(attempt);
-      if (attempt < 5) {
-        expect(failed.retireAt).toBe(Date.now() + 60_000 * 2 ** (attempt - 1));
-        vi.setSystemTime(failed.retireAt!);
+it.each([false, true])(
+  "bounds ambiguous setup cleanup retries with a persisted hook=%s",
+  async (persisted) => {
+    await withTestHarness(async (harness) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const remove = vi.fn(async () => ({ status: "removed" as const }));
+      const fixture = setup(harness, { remove });
+      const cancel = vi.fn(async () => ({ status: "unknown" as const }));
+      registerTestHostRpcCapture(harness.deps, {
+        hostId: fixture.host.id,
+        sessionId: fixture.session.id,
+        onEnvironmentHookCancel: cancel,
+      });
+      fixture.ask();
+      await fixture.settled();
+      const row = fixture.row();
+      const hookId = `environment:${row.id}:${row.environmentProviderInstanceKey}:setup`;
+      if (persisted)
+        harness.db
+          .insert(environmentHookOperations)
+          .values({
+            id: hookId,
+            operationId: hookId,
+            hostId: fixture.host.id,
+            path: row.path!,
+            kind: "setup",
+            startedAt: Date.now() - 60_000,
+          })
+          .run();
+      await expect(
+        cancelProviderEnvironmentCreation(harness.deps, fixture.thread.id),
+      ).rejects.toThrow();
+      for (let attempt = 1; attempt <= 5; attempt++) {
+        const failed = fixture.row();
+        expect(failed.teardownStatus).toBe("failed");
+        expect(failed.teardownAttempt).toBe(attempt);
+        expect(cancel).toHaveBeenCalledTimes(attempt);
         await sweepProviderLifecycles(harness.deps);
+        expect(cancel).toHaveBeenCalledTimes(attempt);
+        if (attempt < 5) {
+          expect(failed.retireAt).toBe(
+            Date.now() + 60_000 * 2 ** (attempt - 1),
+          );
+          vi.setSystemTime(failed.retireAt!);
+          await sweepProviderLifecycles(harness.deps);
+        }
       }
-    }
-    expect(fixture.row()).toMatchObject({ retireAt: null, teardownMessage: expect.stringContaining("Needs recovery") });
-    vi.setSystemTime(Date.now() + 86_400_000);
-    await sweepProviderLifecycles(harness.deps);
-    expect(cancel).toHaveBeenCalledTimes(5);
-    expect(remove).not.toHaveBeenCalled();
-    if (persisted) expect(harness.db.select().from(environmentHookOperations).where(eq(environmentHookOperations.id, hookId)).get()?.finishedAt).toBeNull();
-    const response = await harness.app.request(`/api/v1/environments/${row.id}/cleanup`, { method: "POST" });
-    expect(response.status).toBe(409);
-    expect(await response.text()).toContain("--recover");
-  });
-});
+      expect(fixture.row()).toMatchObject({
+        retireAt: null,
+        teardownMessage: expect.stringContaining("Needs recovery"),
+      });
+      vi.setSystemTime(Date.now() + 86_400_000);
+      await sweepProviderLifecycles(harness.deps);
+      expect(cancel).toHaveBeenCalledTimes(5);
+      expect(remove).not.toHaveBeenCalled();
+      if (persisted)
+        expect(
+          harness.db
+            .select()
+            .from(environmentHookOperations)
+            .where(eq(environmentHookOperations.id, hookId))
+            .get()?.finishedAt,
+        ).toBeNull();
+      const response = await harness.app.request(
+        `/api/v1/environments/${row.id}/cleanup`,
+        { method: "POST" },
+      );
+      expect(response.status).toBe(409);
+      expect(await response.text()).toContain("--recover");
+    });
+  },
+);
+
+it.each([false, true])(
+  "recovers interrupted cleanup only after a clear process inspection (persisted hook=%s)",
+  async (persisted) => {
+    await withTestHarness(async (harness) => {
+      const remove = vi.fn(async () => ({ status: "removed" as const }));
+      const fixture = setup(harness, { remove });
+      registerTestHostRpcCapture(harness.deps, {
+        hostId: fixture.host.id,
+        sessionId: fixture.session.id,
+        onEnvironmentHookCancel: async () => ({ status: "unknown" }),
+      });
+      fixture.ask();
+      await fixture.settled();
+      const row = fixture.row();
+      const hookId = `environment:${row.id}:${row.environmentProviderInstanceKey}:setup`;
+      if (persisted)
+        harness.db
+          .insert(environmentHookOperations)
+          .values({
+            id: hookId,
+            operationId: hookId,
+            hostId: fixture.host.id,
+            path: row.path!,
+            kind: "setup",
+            startedAt: Date.now() - 60_000,
+          })
+          .run();
+      await expect(
+        cancelProviderEnvironmentCreation(harness.deps, fixture.thread.id),
+      ).rejects.toThrow();
+      updateThread(harness.db, harness.hub, fixture.thread.id, {
+        status: "completed",
+        archivedAt: Date.now(),
+      });
+      for (const inspection of [
+        { supported: true, active: false, pids: [123], unreadablePids: [] },
+        { supported: true, active: false, pids: [], unreadablePids: [456] },
+        { supported: true, active: true, pids: [], unreadablePids: [] },
+        { supported: false, active: false, pids: [], unreadablePids: [] },
+        { supported: true, active: false, pids: [], unreadablePids: [] },
+      ]) {
+        let teardownRan = false;
+        registerHostRpcResponder(harness, {
+          hostId: fixture.host.id,
+          sessionId: fixture.session.id,
+          handle: async ({ command }) => {
+            if (command.type === "environment.inspect_cleanup")
+              return { ok: true, result: inspection };
+            if (command.type === "environment.hook.run") {
+              teardownRan = true;
+              return { ok: true, result: {} };
+            }
+            throw new Error(`Unexpected RPC: ${command.type}`);
+          },
+        });
+        const response = await harness.app.request(
+          `/api/v1/environments/${row.id}/cleanup?recover=true`,
+          { method: "POST" },
+        );
+        const clear =
+          inspection.supported &&
+          !inspection.active &&
+          inspection.pids.length === 0 &&
+          inspection.unreadablePids.length === 0;
+        expect(response.status).toBe(clear ? 200 : 409);
+        const hook = harness.db
+          .select()
+          .from(environmentHookOperations)
+          .where(eq(environmentHookOperations.id, hookId))
+          .get();
+        if (clear) {
+          expect(hook?.finishedAt).toEqual(expect.any(Number));
+          expect(fixture.row().teardownStatus).toBe("removed");
+          expect(remove).toHaveBeenCalledOnce();
+          expect(teardownRan).toBe(true);
+        } else {
+          expect(hook?.finishedAt ?? null).toBeNull();
+          expect(fixture.row().teardownStatus).toBe("failed");
+          expect(remove).not.toHaveBeenCalled();
+        }
+      }
+    });
+  },
+);

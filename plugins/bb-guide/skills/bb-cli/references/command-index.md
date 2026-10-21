@@ -217,7 +217,7 @@ This index lists every command path that the core CLI registers, including alias
 - `bb environment providers`
 - `bb environment list`
 - `bb environment delete`
-- `bb environment cleanup`
+- `bb environment cleanup` (`--recover` acknowledges interrupted hooks after inspection)
 - `bb environment show`
 - `bb environment get`
 - `bb environment status`

@@ -142,6 +142,7 @@ import type {
   HostReconnectResponse,
   HostListQuery,
   HostDeleteQuery,
+  EnvironmentCleanupQuery,
   HostActionResponse,
   HostCloneDefaultPathQuery,
   HostCloneDefaultPathResponse,
@@ -351,6 +352,7 @@ import {
   hostDirectoryQuerySchema,
   hostListQuerySchema,
   hostDeleteQuerySchema,
+  environmentCleanupQuerySchema,
   hostCloneDefaultPathQuerySchema,
   hostFileListRequestSchema,
   hostFileReadRequestSchema,
@@ -1142,7 +1144,9 @@ export const publicApiRoutes = {
     cleanup: defineRoute({
       path: "/environments/:id/cleanup",
       method: "post",
-      request: noRequest<PathId>(),
+      request: optionalQueryRequest<PathId, EnvironmentCleanupQuery>(
+        environmentCleanupQuerySchema,
+      ),
       response: jsonResponse<{ ok: true }>(),
     }),
     list: defineRoute({

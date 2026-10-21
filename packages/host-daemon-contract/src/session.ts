@@ -435,6 +435,7 @@ const hostDaemonOnlineRpcResponseSuccessSchema = z.discriminatedUnion(
     onlineRpcResponseSuccessSchemaFor("host.pick_folder"),
     onlineRpcResponseSuccessSchemaFor("environment.hook.run"),
     onlineRpcResponseSuccessSchemaFor("environment.hook.cancel"),
+    onlineRpcResponseSuccessSchemaFor("environment.inspect_cleanup"),
     onlineRpcResponseSuccessSchemaFor("plugin.host.call"),
     onlineRpcResponseSuccessSchemaFor("plugin.host.cancel"),
     onlineRpcResponseSuccessSchemaFor("plugin.host.dispose"),

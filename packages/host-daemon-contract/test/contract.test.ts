@@ -179,6 +179,12 @@ const WORKSPACE_DIFF_AVAILABLE_RESULT: JsonObject = {
 const ONLINE_RPC_RESPONSE_RESULT_FIXTURES: OnlineRpcResponseResultFixtures = {
   "environment.hook.run": {},
   "environment.hook.cancel": { status: "terminated" },
+  "environment.inspect_cleanup": {
+    supported: true,
+    active: false,
+    pids: [],
+    unreadablePids: [],
+  },
   "desktop.browser.list_instances": { instances: [] },
   "desktop.browser.list_tabs": { tabs: [] },
   "desktop.browser.create_tab": {
