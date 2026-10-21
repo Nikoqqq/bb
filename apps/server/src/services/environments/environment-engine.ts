@@ -1489,6 +1489,29 @@ function settleEnvironmentProvisionOutcome(
 ): CommandResultSideEffectsResult {
   const postCommitActions: CommandResultPostCommitAction[] = [];
   const initiator = args.command.initiator;
+  if (
+    args.command.setupScriptTimeoutMs !== null &&
+    (args.report.ok || args.report.errorCode === "setup_script_failed")
+  ) {
+    const environment = getEnvironment(
+      args.deps.db,
+      args.command.environmentId,
+    );
+    if (environment !== null)
+      args.deps.db
+        .update(environmentHookOperations)
+        .set({
+          finishedAt: Date.now(),
+          error: args.report.ok ? null : args.report.errorMessage,
+        })
+        .where(
+          eq(
+            environmentHookOperations.id,
+            `environment:${environment.id}:${environment.environmentProviderInstanceKey}:setup`,
+          ),
+        )
+        .run();
+  }
   if (!initiator && !args.report.ok) {
     const outcome = applyLoggedEnvironmentLifecycleEventInTransaction(
       args.deps,
@@ -1513,21 +1536,6 @@ function settleEnvironmentProvisionOutcome(
     .all();
 
   if (args.report.ok) {
-    const environment = getEnvironment(
-      args.deps.db,
-      args.command.environmentId,
-    );
-    if (environment !== null && args.command.setupScriptTimeoutMs !== null)
-      args.deps.db
-        .update(environmentHookOperations)
-        .set({ finishedAt: Date.now() })
-        .where(
-          eq(
-            environmentHookOperations.id,
-            `environment:${environment.id}:${environment.environmentProviderInstanceKey}:setup`,
-          ),
-        )
-        .run();
     recordProvisionedEnvironmentWorkspace(
       args.deps.db,
       args.deps.hub,
