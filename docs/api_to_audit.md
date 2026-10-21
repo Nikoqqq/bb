@@ -2617,8 +2617,9 @@ The additive `recover: true` option acknowledges interrupted hooks and retries
 failed cleanup after an explicit inspection. Core's cleanup route and the CLI
 use this same path. Linux checks cwd and mapped paths for processes owned by
 the daemon UID and refuses unreadable processes; other users require separate
-inspection. Unsupported platforms refuse recovery. No processes are killed by
-the inspection. Durable automatic recovery is tracked in #5962.
+inspection. Unsupported platforms refuse workspace recovery. Provider resources
+without an owned workspace can restart removal without acknowledging any hooks.
+No processes are killed by the inspection. Durable automatic recovery is tracked in #5962.
 
 Before stabilization, audit path portability and session freshness after
 machine re-enrollment, and cleanup retry behavior across unavailable

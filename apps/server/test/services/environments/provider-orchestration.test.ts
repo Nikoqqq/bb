@@ -1798,51 +1798,77 @@ it("shares one removal operation between cancellation and lifecycle sweeps", asy
   });
 });
 
-it("retries cancelled cleanup through environment teardown without dropping its checkpoint", async () => {
-  await withTestHarness(async (harness) => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    const attempts: number[] = [];
-    const fixture = setup(harness, {
-      create: async () => ({
-        status: "created",
-        path: "/tmp/cancel-retry",
-        ownsPath: false,
+it.each([false, true])(
+  "recovers exhausted provider cleanup without an owned workspace (path absent=%s)",
+  async (pathAbsent) => {
+    await withTestHarness(async (harness) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      const attempts: number[] = [];
+      const fixture = setup(harness, {
+        create: async () => ({
+          status: "created",
+          path: "/tmp/cancel-retry",
+          ownsPath: false,
+          resource: { allocation: "retained" },
+        }),
+        remove: async ({ attempt, resource }) => {
+          attempts.push(attempt);
+          expect(resource).toEqual({ allocation: "retained" });
+          return attempts.length <= 5
+            ? { status: "failed", message: "temporarily unavailable" }
+            : { status: "removed" };
+        },
+      });
+      fixture.ask();
+      await fixture.settled();
+      await expect(
+        cancelProviderEnvironmentCreation(harness.deps, fixture.thread.id),
+      ).rejects.toThrow("temporarily unavailable");
+      const failed = fixture.row();
+      if (pathAbsent)
+        harness.db
+          .update(environments)
+          .set({ path: null })
+          .where(eq(environments.id, failed.id))
+          .run();
+      expect(failed).toMatchObject({
+        status: "error",
+        teardownStatus: "failed",
+        claimPath: "/tmp/cancel-retry",
         resource: { allocation: "retained" },
-      }),
-      remove: async ({ attempt, resource }) => {
-        attempts.push(attempt);
-        expect(resource).toEqual({ allocation: "retained" });
-        return attempts.length === 1
-          ? { status: "failed", message: "temporarily unavailable" }
-          : { status: "removed" };
-      },
+      });
+      await sweepProviderLifecycles(harness.deps);
+      expect(attempts).toEqual([1]);
+      for (let attempt = 2; attempt <= 5; attempt++) {
+        vi.setSystemTime(fixture.row().retireAt!);
+        await sweepProviderLifecycles(harness.deps);
+      }
+      expect(attempts).toEqual([1, 2, 3, 4, 5]);
+      expect(fixture.row().retireAt).toBeNull();
+      harness.db
+        .update(threads)
+        .set({ status: "completed", archivedAt: Date.now() })
+        .where(eq(threads.id, fixture.thread.id))
+        .run();
+      const response = await harness.app.request(
+        `/api/v1/environments/${failed.id}/cleanup?recover=true`,
+        { method: "POST" },
+      );
+      expect(response.status).toBe(200);
+      expect(attempts).toEqual([1, 2, 3, 4, 5, 1]);
+      expect(harness.db.select().from(environmentHookOperations).all()).toEqual(
+        [],
+      );
+      expect(fixture.row()).toMatchObject({
+        id: failed.id,
+        status: "destroyed",
+        teardownStatus: "removed",
+        claimPath: null,
+        resource: null,
+      });
     });
-    fixture.ask();
-    await fixture.settled();
-    await expect(
-      cancelProviderEnvironmentCreation(harness.deps, fixture.thread.id),
-    ).rejects.toThrow("temporarily unavailable");
-    const failed = fixture.row();
-    expect(failed).toMatchObject({
-      status: "error",
-      teardownStatus: "failed",
-      claimPath: "/tmp/cancel-retry",
-      resource: { allocation: "retained" },
-    });
-    await sweepProviderLifecycles(harness.deps);
-    expect(attempts).toEqual([1]);
-    vi.setSystemTime(failed.retireAt!);
-    await sweepProviderLifecycles(harness.deps);
-    expect(attempts).toEqual([1, 2]);
-    expect(fixture.row()).toMatchObject({
-      id: failed.id,
-      status: "destroyed",
-      teardownStatus: "removed",
-      claimPath: null,
-      resource: null,
-    });
-  });
-});
+  },
+);
 
 it("skips environments blocked on a foreign plugin owner until that plugin provides them again", async () => {
   await withTestHarness(async (harness) => {
@@ -2681,10 +2707,11 @@ it.each([false, true])(
       await expect(
         cancelProviderEnvironmentCreation(harness.deps, fixture.thread.id),
       ).rejects.toThrow();
-      updateThread(harness.db, harness.hub, fixture.thread.id, {
-        status: "completed",
-        archivedAt: Date.now(),
-      });
+      harness.db
+        .update(threads)
+        .set({ status: "completed", archivedAt: Date.now() })
+        .where(eq(threads.id, fixture.thread.id))
+        .run();
       for (const inspection of [
         { supported: true, active: false, pids: [123], unreadablePids: [] },
         { supported: true, active: false, pids: [], unreadablePids: [456] },

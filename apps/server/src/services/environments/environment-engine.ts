@@ -1001,8 +1001,6 @@ export async function recoverEnvironmentCleanup(
       const row = getEnvironment(deps.db, environmentId);
       if (
         row === null ||
-        !row.providerOwnsPath ||
-        row.path === null ||
         row.environmentProviderId === null ||
         row.teardownStatus !== "failed" ||
         environmentHasLiveThreads(deps.db, environmentId)
@@ -1012,28 +1010,30 @@ export async function recoverEnvironmentCleanup(
           "invalid_request",
           "Recovery requires a failed, unused provider-managed environment",
         );
-      const workspacePath = row.path;
+      const workspacePath = row.providerOwnsPath ? row.path : null;
       await withEnvironmentCleanupSlot(deps.db, row.hostId, async () => {
-        const inspection = await callHostOnlineRpc(deps, {
-          hostId: row.hostId,
-          timeoutMs: 30_000,
-          command: {
-            type: "environment.inspect_cleanup",
-            environmentId,
-            path: workspacePath,
-          },
-        });
-        if (
-          !inspection.supported ||
-          inspection.active ||
-          inspection.pids.length > 0 ||
-          inspection.unreadablePids.length > 0
-        )
-          throw new ApiError(
-            409,
-            "invalid_request",
-            `Recovery refused: ${!inspection.supported ? "process inspection requires Linux" : inspection.active ? "setup or a hook is still running" : inspection.pids.length > 0 ? `workspace processes remain (${inspection.pids.join(", ")})` : `cannot inspect same-user processes (${inspection.unreadablePids.join(", ")})`}`,
-          );
+        if (workspacePath !== null) {
+          const inspection = await callHostOnlineRpc(deps, {
+            hostId: row.hostId,
+            timeoutMs: 30_000,
+            command: {
+              type: "environment.inspect_cleanup",
+              environmentId,
+              path: workspacePath,
+            },
+          });
+          if (
+            !inspection.supported ||
+            inspection.active ||
+            inspection.pids.length > 0 ||
+            inspection.unreadablePids.length > 0
+          )
+            throw new ApiError(
+              409,
+              "invalid_request",
+              `Recovery refused: ${!inspection.supported ? "process inspection requires Linux" : inspection.active ? "setup or a hook is still running" : inspection.pids.length > 0 ? `workspace processes remain (${inspection.pids.join(", ")})` : `cannot inspect same-user processes (${inspection.unreadablePids.join(", ")})`}`,
+            );
+        }
         const current = getEnvironment(deps.db, environmentId);
         if (
           current === null ||
@@ -1049,42 +1049,43 @@ export async function recoverEnvironmentCleanup(
             "Environment changed during recovery inspection; inspect it again",
           );
         deps.db.transaction(() => {
-          for (const kind of ["setup", "teardown"] as const) {
-            const id = `environment:${row.id}:${row.environmentProviderInstanceKey}:${kind}`;
-            const finishedAt = Date.now();
-            if (
-              kind === "teardown" &&
+          if (workspacePath !== null)
+            for (const kind of ["setup", "teardown"] as const) {
+              const id = `environment:${row.id}:${row.environmentProviderInstanceKey}:${kind}`;
+              const finishedAt = Date.now();
+              if (
+                kind === "teardown" &&
+                deps.db
+                  .select({ id: environmentHookOperations.id })
+                  .from(environmentHookOperations)
+                  .where(eq(environmentHookOperations.id, id))
+                  .get() === undefined
+              )
+                continue;
               deps.db
-                .select({ id: environmentHookOperations.id })
-                .from(environmentHookOperations)
-                .where(eq(environmentHookOperations.id, id))
-                .get() === undefined
-            )
-              continue;
-            deps.db
-              .insert(environmentHookOperations)
-              .values({
-                id,
-                operationId: id,
-                hostId: row.hostId,
-                path: workspacePath,
-                kind,
-                startedAt: finishedAt,
-                finishedAt,
-                error:
-                  "Interrupted hook acknowledged by explicit cleanup recovery",
-              })
-              .onConflictDoUpdate({
-                target: environmentHookOperations.id,
-                set: {
+                .insert(environmentHookOperations)
+                .values({
+                  id,
+                  operationId: id,
+                  hostId: row.hostId,
+                  path: workspacePath,
+                  kind,
+                  startedAt: finishedAt,
                   finishedAt,
                   error:
                     "Interrupted hook acknowledged by explicit cleanup recovery",
-                },
-                setWhere: isNull(environmentHookOperations.finishedAt),
-              })
-              .run();
-          }
+                })
+                .onConflictDoUpdate({
+                  target: environmentHookOperations.id,
+                  set: {
+                    finishedAt,
+                    error:
+                      "Interrupted hook acknowledged by explicit cleanup recovery",
+                  },
+                  setWhere: isNull(environmentHookOperations.finishedAt),
+                })
+                .run();
+            }
           writeEnvironment(deps, environmentId, {
             teardownAttempt: 0,
             retireAt: Date.now(),

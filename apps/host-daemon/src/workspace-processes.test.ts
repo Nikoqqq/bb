@@ -93,3 +93,28 @@ it.skipIf(process.platform === "linux")(
     });
   },
 );
+
+it.skipIf(process.platform !== "linux").each([
+  ["/literal\\040name", "/literal\\040name/lib.so", "/elsewhere"],
+  ["/literal\\012name", "/literal\\012name/lib.so", "/elsewhere"],
+  ["/newline\nname", "/newline\\012name/lib.so", "/elsewhere"],
+  ["/workspace (deleted)", "/elsewhere/lib.so", "/workspace (deleted)"],
+])(
+  "preserves ambiguous proc pathnames for %s",
+  async (workspace, mapped, cwd) => {
+    const uid = process.getuid!();
+    vi.mocked(realpath).mockResolvedValue(workspace);
+    vi.mocked(readdir).mockResolvedValue(["301"] as never);
+    vi.mocked(readFile).mockImplementation(async (file) =>
+      String(file).endsWith("/status")
+        ? `State:\tS\nUid:\t${uid}\t${uid}\t${uid}\t${uid}\n`
+        : `1000-2000 r-xp 00000000 08:01 123 ${mapped}\n`,
+    );
+    vi.mocked(readlink).mockResolvedValue(cwd);
+    expect(await inspectWorkspaceProcesses(workspace)).toEqual({
+      supported: true,
+      pids: [301],
+      unreadablePids: [],
+    });
+  },
+);

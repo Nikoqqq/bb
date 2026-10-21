@@ -22,8 +22,9 @@ async function canonicalPath(value: string): Promise<string> {
 
 function underWorkspace(value: string, workspace: string): boolean {
   const normalized = value.replace(/ \(deleted\)$/, "");
-  return (
-    normalized === workspace || normalized.startsWith(workspace + path.sep)
+  return [value, normalized].some(
+    (candidate) =>
+      candidate === workspace || candidate.startsWith(workspace + path.sep),
   );
 }
 
@@ -57,16 +58,13 @@ export async function inspectWorkspaceProcesses(
       const maps = await readFile(`${directory}/maps`, "utf8");
       const mappedPaths = maps.split("\n").flatMap((line) => {
         const match = line.match(/^\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+(\/.*)$/);
-        return match === null
-          ? []
-          : [
-              match[1]!.replace(/\\([0-7]{3})/g, (_, octal: string) =>
-                String.fromCharCode(Number.parseInt(octal, 8)),
-              ),
-            ];
+        return match === null ? [] : [match[1]!];
       });
       if (
-        [cwd, ...mappedPaths].some((value) => underWorkspace(value, workspace))
+        underWorkspace(cwd, workspace) ||
+        mappedPaths.some((value) =>
+          underWorkspace(value, workspace.replace(/\n/g, "\\012")),
+        )
       )
         pids.push(pid);
     } catch (error) {
