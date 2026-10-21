@@ -24,12 +24,12 @@ const NPM_BOOTSTRAP_SOURCE = [
   "const [prefix,npmCli,...rest]=process.argv.slice(1);",
   "const shim=path.join(prefix,'.bb-node-shim');",
   "fs.mkdirSync(shim,{recursive:true});",
-  "const exe=process.execPath;",
-  "if(process.platform==='win32'){fs.writeFileSync(path.join(shim,'node.cmd'),'@echo off\\r\\nset ELECTRON_RUN_AS_NODE=1\\r\\n\"'+exe+'\" %*\\r\\n');}",
-  "else{const f=path.join(shim,'node');fs.writeFileSync(f,'#!/bin/sh\\nELECTRON_RUN_AS_NODE=1 exec \\''+exe.replace(/'/g,\"'\\\\''\")+'\\' \"$@\"\\n');fs.chmodSync(f,0o755);}",
+  "process.env.PI_BB_NODE_RUNTIME=process.execPath;",
+  "if(process.platform==='win32'){fs.writeFileSync(path.join(shim,'node.cmd'),'@echo off\\r\\nsetlocal\\r\\nset \"ELECTRON_RUN_AS_NODE=1\"\\r\\n\"%PI_BB_NODE_RUNTIME%\" %*\\r\\n');}",
+  "else{const f=path.join(shim,'node');fs.writeFileSync(f,'#!/bin/sh\\nELECTRON_RUN_AS_NODE=1 exec \"$PI_BB_NODE_RUNTIME\" \"$@\"\\n');fs.chmodSync(f,0o755);}",
   "const key=Object.keys(process.env).find(k=>k.toUpperCase()==='PATH')||'PATH';",
   "process.env[key]=shim+path.delimiter+(process.env[key]||'');",
-  "process.argv=[exe,npmCli,...rest];",
+  "process.argv=[process.execPath,npmCli,...rest];",
   "require(npmCli);",
 ].join("");
 

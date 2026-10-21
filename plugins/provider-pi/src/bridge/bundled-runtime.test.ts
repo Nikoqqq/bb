@@ -46,4 +46,34 @@ describe("Pi install on bb's own runtime", () => {
     expect(run.stdout).toContain("status=0 out=from-node");
     expect(run.stdout).toContain("argv=install,--global");
   });
+
+  it("keeps `node` working when bb's runtime lives under a non-ASCII path with %", async () => {
+    const runtimeDir = path.join(root, "Jösé 100%");
+    await fs.mkdir(runtimeDir);
+    const runtime = path.join(runtimeDir, path.basename(process.execPath));
+    await fs.copyFile(process.execPath, runtime);
+    await fs.chmod(runtime, 0o755);
+    const fakeNpm = path.join(root, "fake-npm-cli.js");
+    await fs.writeFile(
+      fakeNpm,
+      [
+        'const { spawnSync } = require("node:child_process");',
+        'const result = spawnSync("node", ["-e", "process.stdout.write(\'from-node\')"], { shell: process.platform === "win32", encoding: "utf8" });',
+        'process.stdout.write(`status=${result.status} out=${result.stdout ?? ""}`);',
+      ].join("\n"),
+    );
+    const emptyPath = path.join(root, "empty-path");
+    await fs.mkdir(emptyPath);
+    configurePiBundledRuntime({ dataDir: root, npmCli: fakeNpm });
+
+    const install = bundledPiInstallCommand();
+    expect(install).not.toBeNull();
+    if (install === null) return;
+    const run = spawnSync(runtime, install.args, {
+      encoding: "utf8",
+      env: { ...process.env, PATH: emptyPath, Path: emptyPath },
+    });
+
+    expect(run.stdout).toContain("status=0 out=from-node");
+  });
 });
