@@ -420,19 +420,28 @@ function rematerialize(
       }
       const entity = readEntity(store, entry.id);
       if (entity !== undefined && !isMember(entity, membership)) continue;
-      const kept =
-        incremental && !dirty.has(entry.id) ? prior?.get(entry.id) : undefined;
+      const previousRow = incremental ? prior?.get(entry.id) : undefined;
       const row =
-        kept ??
-        (entity === undefined
-          ? entry.item
-          : materializeItem(store, skeleton.family, entry.item, entity));
+        previousRow !== undefined && dirty?.has(entry.id) === false
+          ? previousRow
+          : replaceEqualDeep(
+              previousRow,
+              entity === undefined
+                ? entry.item
+                : materializeItem(store, skeleton.family, entry.item, entity),
+            );
       visible.set(entry.id, row);
       rows.push(row);
     }
+    const unchanged =
+      prior !== undefined &&
+      prior.size === rows.length &&
+      [...prior.values()].every((row, index) => row === rows[index]);
+    if (incremental && unchanged) continue;
     items.set(slot, rows);
     materialized.set(slot, visible);
   }
+  if (items.size === 0) return;
   let next = skeleton.family.rebuild(
     incremental ? query.state.data : skeleton.data,
     items,
