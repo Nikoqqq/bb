@@ -938,7 +938,18 @@ async function sweepProviderEnvironmentInSlot(
     teardownMessage: null,
   });
   try {
+    const setupOperation = deps.db
+      .select({ finishedAt: environmentHookOperations.finishedAt })
+      .from(environmentHookOperations)
+      .where(
+        eq(
+          environmentHookOperations.id,
+          `environment:${row.id}:${row.environmentProviderInstanceKey}:setup`,
+        ),
+      )
+      .get();
     const setupUnresolved =
+      (setupOperation !== undefined && setupOperation.finishedAt === null) ||
       cancelled ||
       ((row.status === "provisioning" || row.status === "error") &&
         deps.db
@@ -1502,6 +1513,21 @@ function settleEnvironmentProvisionOutcome(
     .all();
 
   if (args.report.ok) {
+    const environment = getEnvironment(
+      args.deps.db,
+      args.command.environmentId,
+    );
+    if (environment !== null && args.command.setupScriptTimeoutMs !== null)
+      args.deps.db
+        .update(environmentHookOperations)
+        .set({ finishedAt: Date.now() })
+        .where(
+          eq(
+            environmentHookOperations.id,
+            `environment:${environment.id}:${environment.environmentProviderInstanceKey}:setup`,
+          ),
+        )
+        .run();
     recordProvisionedEnvironmentWorkspace(
       args.deps.db,
       args.deps.hub,
@@ -1792,6 +1818,22 @@ async function runEnvironmentProvisionCommand(
   deps: CommandResultSideEffectsDeps,
   args: StartTrackedEnvironmentProvisionCommandArgs,
 ): Promise<void> {
+  if (args.request.command.setupScriptTimeoutMs !== null) {
+    const environment = args.environment;
+    const id = `environment:${environment.id}:${environment.environmentProviderInstanceKey}:setup`;
+    deps.db
+      .insert(environmentHookOperations)
+      .values({
+        id,
+        operationId: id,
+        hostId: environment.hostId,
+        path: args.request.command.path,
+        kind: "setup",
+        startedAt: Date.now(),
+      })
+      .onConflictDoNothing()
+      .run();
+  }
   const execution = createLiveHostCommandExecution(args.environment.hostId);
   await runLiveHostCommand(deps, {
     command: args.request.command,

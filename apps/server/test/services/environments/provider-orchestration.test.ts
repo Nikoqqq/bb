@@ -2608,6 +2608,7 @@ it.each([
   { persisted: false, attached: false },
   { persisted: true, attached: false },
   { persisted: false, attached: true },
+  { persisted: true, attached: true },
 ])(
   "bounds ambiguous setup cleanup retries with %j",
   async ({ persisted, attached }) => {
@@ -2641,7 +2642,7 @@ it.each([
         fixture.attach();
         harness.db
           .update(environments)
-          .set({ status: "error", retireAt: Date.now() })
+          .set({ status: persisted ? "ready" : "error", retireAt: Date.now() })
           .where(eq(environments.id, row.id))
           .run();
         harness.db
