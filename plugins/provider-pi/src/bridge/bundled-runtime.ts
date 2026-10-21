@@ -19,6 +19,19 @@ const BUNDLED_PREFIX_DIR_NAME = "pi-npm-global";
 const LATEST_VERSION_TIMEOUT_MS = 15_000;
 const PI_BOOTSTRAP_SOURCE =
   "delete process.env.ELECTRON_RUN_AS_NODE;import(require('node:url').pathToFileURL(process.argv[1]).href)";
+const NPM_BOOTSTRAP_SOURCE = [
+  "const fs=require('node:fs'),path=require('node:path');",
+  "const [prefix,npmCli,...rest]=process.argv.slice(1);",
+  "const shim=path.join(prefix,'.bb-node-shim');",
+  "fs.mkdirSync(shim,{recursive:true});",
+  "const exe=process.execPath;",
+  "if(process.platform==='win32'){fs.writeFileSync(path.join(shim,'node.cmd'),'@echo off\\r\\nset ELECTRON_RUN_AS_NODE=1\\r\\n\"'+exe+'\" %*\\r\\n');}",
+  "else{const f=path.join(shim,'node');fs.writeFileSync(f,'#!/bin/sh\\nELECTRON_RUN_AS_NODE=1 exec \\''+exe.replace(/'/g,\"'\\\\''\")+'\\' \"$@\"\\n');fs.chmodSync(f,0o755);}",
+  "const key=Object.keys(process.env).find(k=>k.toUpperCase()==='PATH')||'PATH';",
+  "process.env[key]=shim+path.delimiter+(process.env[key]||'');",
+  "process.argv=[exe,npmCli,...rest];",
+  "require(npmCli);",
+].join("");
 
 const piPackageSchema = z.object({
   bin: z.union([z.string().min(1), z.object({ pi: z.string().min(1) })]),
@@ -128,6 +141,9 @@ export function bundledPiInstallCommand(): ProviderInstallationCommand | null {
   const runtime = usableBundledNpm();
   if (runtime === null) return null;
   const args = [
+    "-e",
+    NPM_BOOTSTRAP_SOURCE,
+    runtime.prefix,
     runtime.npmCli,
     "install",
     "--global",

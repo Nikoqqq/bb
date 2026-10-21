@@ -126,7 +126,8 @@ describe("Pi installs on bb's own runtime", () => {
     if (!run.available) throw new Error(run.message);
     expect(run.command.command).toBe(process.execPath);
     expect(run.command.command).not.toMatch(/^npm(\.cmd)?$/u);
-    expect(run.command.args[0]).toBe(npmCli);
+    expect(run.command.args[0]).toBe("-e");
+    expect(run.command.args).toContain(npmCli);
     expect(run.command.args).toEqual(
       expect.arrayContaining([
         "install",
