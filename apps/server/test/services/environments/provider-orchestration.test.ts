@@ -1847,7 +1847,7 @@ it.each([false, true])(
       expect(fixture.row().retireAt).toBeNull();
       harness.db
         .update(threads)
-        .set({ status: "completed", archivedAt: Date.now() })
+        .set({ status: "idle", archivedAt: Date.now() })
         .where(eq(threads.id, fixture.thread.id))
         .run();
       const response = await harness.app.request(
@@ -2646,7 +2646,7 @@ it.each([
           .run();
         harness.db
           .update(threads)
-          .set({ status: "failed", archivedAt: Date.now() })
+          .set({ status: "error", archivedAt: Date.now() })
           .where(eq(threads.id, fixture.thread.id))
           .run();
         await sweepProviderEnvironment(harness.deps, row.id);
@@ -2728,7 +2728,7 @@ it.each([false, true])(
       ).rejects.toThrow();
       harness.db
         .update(threads)
-        .set({ status: "completed", archivedAt: Date.now() })
+        .set({ status: "idle", archivedAt: Date.now() })
         .where(eq(threads.id, fixture.thread.id))
         .run();
       for (const inspection of [
