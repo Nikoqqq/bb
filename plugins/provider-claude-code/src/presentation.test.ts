@@ -371,6 +371,39 @@ describe("claude item presentation", () => {
     });
   });
 
+  it("titles a Workflow call by its name, script path or meta name", () => {
+    const cases: ReadonlyArray<{ input: unknown; title: string | undefined }> =
+      [
+        {
+          input: { name: "review-changes", args: {} },
+          title: "review-changes",
+        },
+        {
+          input: { scriptPath: "/repo/.claude/workflows/sweep.js" },
+          title: "sweep.js",
+        },
+        {
+          input: {
+            script:
+              "export const meta = {\n  name: 'smoke-test',\n  description: 'Tiny',\n}\nreturn 1",
+          },
+          title: "smoke-test",
+        },
+        { input: { script: "phase('Scan')\nreturn 1" }, title: undefined },
+      ];
+    for (const [index, { input, title }] of cases.entries()) {
+      const harness = createClaudeDeltaHarness();
+      const events = harness.translate(
+        toolUse(`workflow-${index}`, "Workflow", input),
+      );
+      expect(presentationOf(startedItems(events)[0])).toEqual({
+        label: { pending: "Starting workflow", completed: "Started workflow" },
+        icon: { glyph: "Workflow" },
+        ...(title === undefined ? {} : { title }),
+      });
+    }
+  });
+
   it("labels an inline Skill call as loading once its result arrives", () => {
     const harness = createClaudeDeltaHarness();
     const events = [

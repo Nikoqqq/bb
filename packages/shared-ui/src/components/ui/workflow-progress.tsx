@@ -54,6 +54,17 @@ interface WorkflowPhaseGroup {
 }
 
 const ACTIVE_PHASE_SCROLL_OFFSET = 12;
+const COMPACT_AGENT_ROW_CLASS =
+  "@max-[28rem]/workflow-progress:flex-wrap @max-[28rem]/workflow-progress:gap-y-0.5";
+const COMPACT_AGENT_LABEL_CLASS =
+  "@max-[28rem]/workflow-progress:flex-1 @max-[28rem]/workflow-progress:line-clamp-2 @max-[28rem]/workflow-progress:whitespace-normal @max-[28rem]/workflow-progress:break-words";
+const COMPACT_AGENT_STATS_CLASS =
+  "@max-[28rem]/workflow-progress:min-w-0 @max-[28rem]/workflow-progress:shrink @max-[28rem]/workflow-progress:basis-full @max-[28rem]/workflow-progress:pl-5.5";
+const COMPACT_AGENT_ERROR_CLASS =
+  "@max-[28rem]/workflow-progress:basis-full @max-[28rem]/workflow-progress:pl-5.5";
+const COMPACT_AGENT_META_CLASS =
+  "@max-[28rem]/workflow-progress:min-w-0 @max-[28rem]/workflow-progress:truncate";
+const COARSE_POINTER_ACTIONABLE_ROW_CLASS = "max-md:pointer-coarse:min-h-9";
 const PROMPT_STACK_ACTIVE_ROW_CLASS = "shadow-none ring-0";
 const PROMPT_STACK_ACTIVE_ICON_CLASS = "text-foreground";
 const PROMPT_STACK_ACTIVE_TEXT_CLASS = "font-medium text-foreground";
@@ -248,10 +259,14 @@ function WorkflowAgentLine({
           promptStack
             ? promptStackActivityTextClass(
                 activityState,
-                "min-w-0 truncate text-xs no-underline",
+                cn(
+                  "min-w-0 truncate text-xs no-underline",
+                  COMPACT_AGENT_LABEL_CLASS,
+                ),
               )
             : cn(
                 "min-w-0 truncate text-xs",
+                COMPACT_AGENT_LABEL_CLASS,
                 displayState === "running"
                   ? "text-foreground"
                   : "text-muted-foreground",
@@ -262,21 +277,35 @@ function WorkflowAgentLine({
         {agent.label}
       </span>
       {displayState === "failed" && agent.error ? (
-        <span className="min-w-0 truncate text-xs text-destructive/80">
-          — {agent.error}
+        <span
+          className={cn(
+            "min-w-0 truncate text-xs text-destructive/80",
+            COMPACT_AGENT_ERROR_CLASS,
+          )}
+        >
+          <span className="@max-[28rem]/workflow-progress:hidden">— </span>
+          {agent.error}
         </span>
       ) : null}
-      <span className="ml-auto flex shrink-0 items-baseline gap-2">
+      <span
+        className={cn(
+          "ml-auto flex shrink-0 items-baseline gap-2",
+          COMPACT_AGENT_STATS_CLASS,
+        )}
+      >
         {stats.meta === "" ? null : (
           <span
-            className="whitespace-nowrap font-mono text-2xs text-subtle-foreground/80"
+            className={cn(
+              "whitespace-nowrap font-mono text-2xs text-subtle-foreground/80",
+              COMPACT_AGENT_META_CLASS,
+            )}
             title={stats.meta}
           >
             {stats.meta}
           </span>
         )}
         {stats.duration === null ? null : (
-          <span className="min-w-9 whitespace-nowrap text-right text-xs tabular-nums text-subtle-foreground">
+          <span className="ml-auto min-w-9 shrink-0 whitespace-nowrap text-right text-xs tabular-nums text-subtle-foreground">
             {stats.duration}
           </span>
         )}
@@ -288,12 +317,22 @@ function WorkflowAgentLine({
         activityState,
         cn(
           "flex min-h-7 w-full min-w-0 items-center gap-2 text-left text-xs",
-          onActivate && "cursor-pointer hover:bg-state-hover",
+          COMPACT_AGENT_ROW_CLASS,
+          onActivate &&
+            cn(
+              "cursor-pointer hover:bg-state-hover",
+              COARSE_POINTER_ACTIONABLE_ROW_CLASS,
+            ),
         ),
       )
     : cn(
         "flex min-w-0 items-center gap-2 px-2 py-0.5 text-left",
-        onActivate && "w-full cursor-pointer rounded hover:bg-state-hover",
+        COMPACT_AGENT_ROW_CLASS,
+        onActivate &&
+          cn(
+            "w-full cursor-pointer rounded hover:bg-state-hover",
+            COARSE_POINTER_ACTIONABLE_ROW_CLASS,
+          ),
       );
   return onActivate ? (
     <button type="button" className={className} onClick={onActivate}>
@@ -555,6 +594,7 @@ function CollapsiblePhaseSection({
         onClick={onToggle}
         className={cn(
           "flex w-full items-center gap-1.5 text-left transition-colors hover:bg-state-hover",
+          COARSE_POINTER_ACTIONABLE_ROW_CLASS,
           promptStackActivityRowClass(activityState),
         )}
       >
@@ -666,7 +706,7 @@ export function WorkflowProgress({
   return (
     <div
       className={cn(
-        "flex flex-col",
+        "@container/workflow-progress flex flex-col",
         collapsiblePhases ? "gap-1.5" : "gap-1 py-1",
       )}
     >

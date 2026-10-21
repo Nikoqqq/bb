@@ -85,6 +85,33 @@ interface ToolPresentationSpec {
   glyph: string;
   suppress?: boolean;
   titleField?: string;
+  titleFrom?: (args: Record<string, unknown>) => string | undefined;
+}
+
+const WORKFLOW_META_NAME_PATTERN =
+  /export\s+const\s+meta\s*=\s*\{[\s\S]*?\bname\s*:\s*(["'`])([^"'`\n]+)\1/;
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : undefined;
+}
+
+export function workflowLaunchTitle(
+  args: Record<string, unknown>,
+): string | undefined {
+  const name = nonEmptyString(args.name);
+  if (name !== undefined) {
+    return name;
+  }
+  const scriptPath = nonEmptyString(args.scriptPath);
+  if (scriptPath !== undefined) {
+    return presentationFileName(scriptPath);
+  }
+  const script = nonEmptyString(args.script);
+  return script === undefined
+    ? undefined
+    : nonEmptyString(WORKFLOW_META_NAME_PATTERN.exec(script)?.[2]);
 }
 
 const BUILTIN_TOOL_PRESENTATIONS: Readonly<
@@ -167,6 +194,7 @@ const BUILTIN_TOOL_PRESENTATIONS: Readonly<
   Workflow: {
     label: { pending: "Starting workflow", completed: "Started workflow" },
     glyph: "Workflow",
+    titleFrom: workflowLaunchTitle,
   },
   TaskStop: {
     label: { pending: "Stopping task", completed: "Stopped task" },
@@ -214,12 +242,20 @@ const BUILTIN_TOOL_PRESENTATIONS: Readonly<
 
 function titleFromArgs(
   args: unknown,
-  field: string | undefined,
+  spec: ToolPresentationSpec,
 ): string | undefined {
-  if (field === undefined || args === null || typeof args !== "object") {
+  if (args === null || typeof args !== "object") {
     return undefined;
   }
-  const value = (args as Record<string, unknown>)[field];
+  const record = args as Record<string, unknown>;
+  if (spec.titleFrom !== undefined) {
+    const title = spec.titleFrom(record);
+    return title === undefined ? undefined : presentationTitle(title);
+  }
+  if (spec.titleField === undefined) {
+    return undefined;
+  }
+  const value = record[spec.titleField];
   return typeof value === "string" ? presentationTitle(value) : undefined;
 }
 
@@ -237,7 +273,7 @@ export function builtinToolPresentation(
       icon: { glyph: spec.glyph },
       ...(spec.suppress === true ? { suppress: true } : {}),
     },
-    titleFromArgs(args, spec.titleField),
+    titleFromArgs(args, spec),
   );
 }
 

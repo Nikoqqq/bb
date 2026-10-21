@@ -216,6 +216,156 @@ function insertTurns(
   insertEvents(db, noopNotifier, events);
 }
 
+function insertLaunchedWorkflowTurns(
+  db: DbConnection,
+  thread: Thread,
+  args: {
+    turnCount: number;
+    settleTurn: number | null;
+    taskStarted: boolean;
+  },
+): void {
+  const events: Parameters<typeof insertEvents>[2] = [];
+  let sequence = 0;
+  const workflowItem = (settled: boolean) => ({
+    type: "backgroundTask",
+    id: "task:wf-1",
+    taskType: "local_workflow",
+    description: "Review the change",
+    status: settled ? "completed" : "pending",
+    taskStatus: settled ? "completed" : "running",
+    skipTranscript: false,
+    foreground: false,
+    workflowName: "review",
+    parentToolCallId: "toolu-wf",
+  });
+  const push = (
+    event: Omit<Parameters<typeof insertEvents>[2][number], "sequence">,
+  ) => {
+    sequence += 1;
+    events.push({ ...event, sequence });
+  };
+  for (let turn = 1; turn <= args.turnCount; turn += 1) {
+    const turnId = `turn-${turn}`;
+    const clientRequestId = requestId(turn);
+    const turnEvent = {
+      threadId: thread.id,
+      scope: turnScope(turnId),
+      providerThreadId,
+      itemId: null,
+      itemKind: null,
+      parentToolCallId: null,
+    };
+    push({
+      threadId: thread.id,
+      type: "client/turn/requested",
+      scope: threadScope(),
+      itemId: null,
+      itemKind: null,
+      parentToolCallId: null,
+      data: JSON.stringify({
+        direction: "outbound",
+        source: "tell",
+        initiator: "user",
+        request: { method: "turn/start", params: {} },
+        requestId: clientRequestId,
+        senderThreadId: null,
+        input: [{ type: "text", text: `User message ${turn}`, mentions: [] }],
+        target: turn === 1 ? { kind: "thread-start" } : { kind: "new-turn" },
+        execution,
+      }),
+    });
+    push({ ...turnEvent, type: "turn/started", data: "{}" });
+    push({
+      ...turnEvent,
+      type: "turn/input/accepted",
+      data: JSON.stringify({ clientRequestId }),
+    });
+    if (turn === 1) {
+      for (const type of ["item/started", "item/completed"] as const) {
+        push({
+          ...turnEvent,
+          type,
+          itemId: "toolu-wf",
+          itemKind: "toolCall",
+          data: JSON.stringify({
+            providerThreadId,
+            item: {
+              type: "toolCall",
+              id: "toolu-wf",
+              tool: "Workflow",
+              arguments: { name: "review" },
+              status: type === "item/started" ? "pending" : "completed",
+            },
+          }),
+        });
+        if (type === "item/started" && args.taskStarted) {
+          push({
+            ...turnEvent,
+            type,
+            itemId: "task:wf-1",
+            itemKind: "backgroundTask",
+            parentToolCallId: "toolu-wf",
+            data: JSON.stringify({
+              providerThreadId,
+              item: workflowItem(false),
+            }),
+          });
+        }
+      }
+    }
+    for (let item = 0; item < 5; item += 1) {
+      push({
+        ...turnEvent,
+        type: "item/completed",
+        itemId: `${turnId}-item-${item}`,
+        itemKind: "agentMessage",
+        data: JSON.stringify({
+          item: {
+            type: "agentMessage",
+            id: `${turnId}-item-${item}`,
+            text: `Turn ${turn} item ${item}`,
+          },
+        }),
+      });
+    }
+    if (turn > 1 && (args.settleTurn === null || turn <= args.settleTurn)) {
+      const settled = turn === args.settleTurn;
+      push({
+        threadId: thread.id,
+        scope: threadScope(),
+        providerThreadId,
+        type: settled
+          ? "item/backgroundTask/completed"
+          : "item/backgroundTask/progress",
+        itemId: "task:wf-1",
+        itemKind: "backgroundTask",
+        parentToolCallId: "toolu-wf",
+        data: JSON.stringify({ providerThreadId, item: workflowItem(settled) }),
+      });
+    }
+    push({
+      ...turnEvent,
+      type: "turn/completed",
+      data: JSON.stringify({ status: "completed" }),
+    });
+  }
+  insertEvents(db, noopNotifier, events);
+}
+
+function collectRowIds(rows: readonly TimelineRow[]): string[] {
+  return rows.flatMap((row) => [
+    row.kind === "work" ? `${row.workKind}:${row.id}` : `${row.kind}:${row.id}`,
+    ...collectRowIds(
+      row.kind === "turn"
+        ? (row.children ?? [])
+        : row.kind === "work" && row.workKind === "delegation"
+          ? (row.childRows ?? [])
+          : [],
+    ),
+  ]);
+}
+
 function insertTurnsWithReusedFileChangeItemId(
   db: DbConnection,
   thread: Thread,
@@ -1205,6 +1355,84 @@ describe("timeline event budget", () => {
         }
       } finally {
         await harness.cleanup();
+      }
+    },
+  );
+
+  it.each(
+    (["collapse", "flat"] as const).flatMap((completedTurnDisplay) =>
+      [
+        { name: "still running", settleTurn: null, taskStarted: true },
+        {
+          name: "settled in the latest turn",
+          settleTurn: 12,
+          taskStarted: true,
+        },
+        { name: "settled in a middle turn", settleTurn: 6, taskStarted: true },
+        {
+          name: "only its completion copied by a fork",
+          settleTurn: 3,
+          taskStarted: false,
+        },
+      ].map((testCase) => ({ ...testCase, completedTurnDisplay })),
+    ),
+  )(
+    "keeps a launched workflow once, beside its Workflow call, across pages ($completedTurnDisplay, $name)",
+    ({ completedTurnDisplay, settleTurn, taskStarted }) => {
+      const { db, thread } = setup();
+      try {
+        insertLaunchedWorkflowTurns(db, thread, {
+          turnCount: 12,
+          settleTurn,
+          taskStarted,
+        });
+        const options = {
+          completedTurnDisplay,
+          includeClearedContextHistory: false,
+          includeDiagnosticOperations: false,
+          compactionOfferEnabled: false,
+          summarizeShellCommands: true,
+          includeNestedRows: true,
+          maxInlineOutputChars: null,
+          maxSeq: 0,
+        } as const;
+        const canonical = buildThreadTimelineWithProfile(db, thread, {
+          ...options,
+          eventBudget: LARGE_BUDGET,
+          page: { kind: "latest", segmentLimit: 1000 },
+        }).response;
+        let rows: TimelineRow[] = [];
+        let cursor: TimelinePaginationCursor | null = null;
+        let pages = 0;
+        do {
+          const response: ThreadTimelineResponse =
+            buildThreadTimelineWithProfile(db, thread, {
+              ...options,
+              eventBudget: 40,
+              page: cursor
+                ? { kind: "older", beforeCursor: cursor, segmentLimit: 3 }
+                : { kind: "latest", segmentLimit: 3 },
+            }).response;
+          rows = prependOlderTimelineRows({
+            loadedRows: rows,
+            olderRows: response.rows,
+          });
+          cursor = response.timelinePage.olderCursor;
+          expect(++pages).toBeLessThan(100);
+        } while (cursor);
+
+        expect(pages).toBeGreaterThan(1);
+        expect(rows).toEqual(canonical.rows);
+        const rowIds = collectRowIds(rows);
+        expect(rowIds.filter((id) => id.startsWith("delegation:"))).toEqual([]);
+        expect(rowIds.filter((id) => id.startsWith("workflow:"))).toEqual([
+          "workflow:task:wf-1",
+        ]);
+        expect(
+          rowIds[rowIds.indexOf(`tool:${thread.id}:tool:toolu-wf`) + 1],
+        ).toBe("workflow:task:wf-1");
+      } finally {
+        db.$client.close();
       }
     },
   );

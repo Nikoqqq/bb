@@ -72,6 +72,7 @@ function taskItem(args: {
   summary?: string;
   id?: string;
   workflowName?: string;
+  parentToolCallId?: string;
 }): ThreadEventBackgroundTaskItem {
   return {
     type: "backgroundTask",
@@ -86,7 +87,95 @@ function taskItem(args: {
     ...(args.workflow ? { workflow: args.workflow } : {}),
     ...(args.summary ? { summary: args.summary } : {}),
     usage: { totalTokens: 26674, toolUses: 0, durationMs: 3277 },
+    ...(args.parentToolCallId
+      ? { parentToolCallId: args.parentToolCallId }
+      : {}),
   };
+}
+
+function toolCallEvent(args: {
+  type: "item/started" | "item/completed";
+  id: string;
+  tool: string;
+  seq: number;
+  parentToolCallId?: string;
+}): ThreadEventWithMeta {
+  return withMeta(
+    {
+      type: args.type,
+      threadId: "thread-1",
+      providerThreadId: "provider-1",
+      scope: turnScope("turn-1"),
+      item: {
+        type: "toolCall",
+        id: args.id,
+        tool: args.tool,
+        arguments:
+          args.tool === "Workflow"
+            ? { script: "export const meta = { name: 'fixture-mini' }" }
+            : { description: "Run the review workflow", prompt: "Run it" },
+        status: args.type === "item/started" ? "pending" : "completed",
+        ...(args.type === "item/completed"
+          ? { result: "Workflow launched in background." }
+          : {}),
+        ...(args.parentToolCallId
+          ? { parentToolCallId: args.parentToolCallId }
+          : {}),
+      },
+    },
+    args.seq,
+  );
+}
+
+function workflowTaskEvent(args: {
+  type:
+    | "item/started"
+    | "item/backgroundTask/progress"
+    | "item/backgroundTask/completed";
+  seq: number;
+}): ThreadEventWithMeta {
+  const settled = args.type === "item/backgroundTask/completed";
+  return withMeta(
+    {
+      type: args.type,
+      threadId: "thread-1",
+      providerThreadId: "provider-1",
+      scope: args.type === "item/started" ? turnScope("turn-1") : threadScope(),
+      item: taskItem({
+        status: settled ? "completed" : "pending",
+        taskStatus: settled ? "completed" : "running",
+        ...(args.type === "item/started"
+          ? {}
+          : { workflow: settled ? DONE_SNAPSHOT : RUNNING_SNAPSHOT }),
+        parentToolCallId: "toolu-wf",
+      }),
+    },
+    args.seq,
+  );
+}
+
+function flattenRows(rows: readonly TimelineRow[]): TimelineRow[] {
+  return rows.flatMap((row) => [
+    row,
+    ...(row.kind === "turn" && row.children ? flattenRows(row.children) : []),
+    ...(row.kind === "work" && row.workKind === "delegation"
+      ? flattenRows(row.childRows ?? [])
+      : []),
+  ]);
+}
+
+function workRowKinds(rows: readonly TimelineRow[]): string[] {
+  return rows.flatMap((row) =>
+    row.kind === "work" ? [`${row.workKind}:${row.id}`] : [],
+  );
+}
+
+function turnChildren(rows: readonly TimelineRow[]): TimelineRow[] {
+  const turn = rows.find((row) => row.kind === "turn");
+  if (turn?.kind !== "turn" || !turn.children) {
+    throw new Error("Expected a turn row with children");
+  }
+  return turn.children;
 }
 
 function bashTaskItem(args: {
@@ -320,6 +409,126 @@ describe("background task timeline projection", () => {
       "done",
     ]);
     expect(row.completedAt).not.toBeNull();
+  });
+
+  it("shows a Workflow call as a tool row followed by its workflow instead of a subagent", () => {
+    const rows = buildTimelineRows([
+      turnStarted("turn-1", 1),
+      toolCallEvent({
+        type: "item/started",
+        id: "toolu-wf",
+        tool: "Workflow",
+        seq: 2,
+      }),
+      workflowTaskEvent({ type: "item/started", seq: 3 }),
+      toolCallEvent({
+        type: "item/completed",
+        id: "toolu-wf",
+        tool: "Workflow",
+        seq: 4,
+      }),
+      turnCompleted("turn-1", 5),
+      workflowTaskEvent({ type: "item/backgroundTask/progress", seq: 6 }),
+      workflowTaskEvent({ type: "item/backgroundTask/completed", seq: 7 }),
+    ]);
+
+    expect(
+      flattenRows(rows).filter(
+        (row) => row.kind === "work" && row.workKind === "delegation",
+      ),
+    ).toEqual([]);
+    expect(workRowKinds(turnChildren(rows))).toEqual([
+      "tool:thread-1:tool:toolu-wf",
+      expect.stringMatching(/^workflow:/),
+    ]);
+    const [workflow] = findWorkflowRows(rows);
+    expect(workflow).toMatchObject({
+      status: "completed",
+      workflowName: "fixture-mini",
+    });
+    expect(workflow?.workflow?.agents.map((agent) => agent.state)).toEqual([
+      "done",
+      "done",
+    ]);
+  });
+
+  it("keeps a workflow beside its Workflow call when only its later events are in the page", () => {
+    const rows = buildTimelineRows([
+      turnStarted("turn-1", 1),
+      toolCallEvent({
+        type: "item/started",
+        id: "toolu-wf",
+        tool: "Workflow",
+        seq: 2,
+      }),
+      toolCallEvent({
+        type: "item/completed",
+        id: "toolu-wf",
+        tool: "Workflow",
+        seq: 4,
+      }),
+      turnCompleted("turn-1", 5),
+      turnStarted("turn-2", 6),
+      turnCompleted("turn-2", 7),
+      workflowTaskEvent({ type: "item/backgroundTask/completed", seq: 8 }),
+    ]);
+
+    expect(
+      rows.filter((row) => row.kind === "work" && row.workKind === "workflow"),
+    ).toEqual([]);
+    expect(workRowKinds(turnChildren(rows))).toEqual([
+      "tool:thread-1:tool:toolu-wf",
+      expect.stringMatching(/^workflow:/),
+    ]);
+  });
+
+  it("keeps a workflow launched inside a subagent nested under that subagent", () => {
+    const rows = buildTimelineRows([
+      turnStarted("turn-1", 1),
+      toolCallEvent({
+        type: "item/started",
+        id: "toolu-agent",
+        tool: "Agent",
+        seq: 2,
+      }),
+      toolCallEvent({
+        type: "item/started",
+        id: "toolu-wf",
+        tool: "Workflow",
+        seq: 3,
+        parentToolCallId: "toolu-agent",
+      }),
+      workflowTaskEvent({ type: "item/started", seq: 4 }),
+      toolCallEvent({
+        type: "item/completed",
+        id: "toolu-wf",
+        tool: "Workflow",
+        seq: 5,
+        parentToolCallId: "toolu-agent",
+      }),
+      toolCallEvent({
+        type: "item/completed",
+        id: "toolu-agent",
+        tool: "Agent",
+        seq: 6,
+      }),
+      turnCompleted("turn-1", 7),
+    ]);
+
+    const delegations = flattenRows(rows).filter(
+      (row) => row.kind === "work" && row.workKind === "delegation",
+    );
+    expect(delegations.map((row) => row.id)).toEqual([
+      "thread-1:delegation:toolu-agent",
+    ]);
+    const [agent] = delegations;
+    if (agent?.kind !== "work" || agent.workKind !== "delegation") {
+      throw new Error("Expected the Agent delegation row");
+    }
+    expect(workRowKinds(agent.childRows ?? [])).toEqual([
+      "tool:thread-1:delegation:toolu-agent:child:thread-1:tool:toolu-wf",
+      "workflow:thread-1:delegation:toolu-agent:child:task:wf-1",
+    ]);
   });
 
   it("keeps one row when completion arrives turns after the spawning turn", () => {
@@ -758,10 +967,9 @@ describe("background task timeline projection", () => {
       },
       2,
     );
-    const whileForeground = buildTimeline(
-      [turnStarted("turn-1", 1), started],
-      { includeNestedRows: false },
-    );
+    const whileForeground = buildTimeline([turnStarted("turn-1", 1), started], {
+      includeNestedRows: false,
+    });
     expect(whileForeground.activeBackgroundCommands).toEqual([]);
 
     const afterBackgrounding = buildTimeline(

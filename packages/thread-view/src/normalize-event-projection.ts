@@ -1,5 +1,8 @@
 import { getProjectionEntryMessages } from "./event-projection-flatten.js";
-import { isLegacyDelegationToolCall } from "@bb/domain";
+import {
+  isLegacyDelegationToolCall,
+  LOCAL_WORKFLOW_TASK_TYPE,
+} from "@bb/domain";
 import {
   getFirstStringField,
   getMessageStartedAt,
@@ -12,6 +15,7 @@ import type {
   EventProjectionEntry,
   EventProjectionToolCallMessage,
   EventProjectionTurn,
+  EventProjectionWorkflowMessage,
 } from "./event-projection-types.js";
 import { findLastTerminalTimelineMessage } from "./timeline-message-helpers.js";
 import { getProjectionSummaryCount } from "./apply-turn-message-detail.js";
@@ -255,6 +259,101 @@ function collectProjectionMessageContexts(
   return contexts;
 }
 
+function isLocalWorkflowMessage(
+  message: EventProjectionMessage,
+): message is EventProjectionWorkflowMessage {
+  return (
+    message.kind === "workflow" && message.taskType === LOCAL_WORKFLOW_TASK_TYPE
+  );
+}
+
+function withLauncherParent(
+  message: EventProjectionWorkflowMessage,
+  launcher: EventProjectionToolCallMessage,
+): EventProjectionWorkflowMessage {
+  const { parentToolCallId: _launcherCallId, ...rest } = message;
+  const workflow = {
+    ...rest,
+    sourceSeqStart: Math.min(message.sourceSeqStart, launcher.sourceSeqStart),
+  };
+  return launcher.parentToolCallId === undefined
+    ? workflow
+    : { ...workflow, parentToolCallId: launcher.parentToolCallId };
+}
+
+function findWorkflowLauncherCallIds(
+  contexts: readonly SemanticMessageContext[],
+): Set<string> {
+  const onlyWorkflowChildrenByCallId = new Map<string, boolean>();
+  for (const { message } of contexts) {
+    if (message.parentToolCallId === undefined) {
+      continue;
+    }
+    onlyWorkflowChildrenByCallId.set(
+      message.parentToolCallId,
+      (onlyWorkflowChildrenByCallId.get(message.parentToolCallId) ?? true) &&
+        isLocalWorkflowMessage(message),
+    );
+  }
+  const launcherCallIds = new Set<string>();
+  for (const { message } of contexts) {
+    if (
+      message.kind === "tool-call" &&
+      onlyWorkflowChildrenByCallId.get(message.callId) === true &&
+      !isLegacyDelegationToolCall({
+        tool: message.toolName,
+        presentation: message.presentation,
+      })
+    ) {
+      launcherCallIds.add(message.callId);
+    }
+  }
+  return launcherCallIds;
+}
+
+function placeWorkflowsAfterLaunchers(
+  contexts: SemanticMessageContext[],
+): SemanticMessageContext[] {
+  const launcherCallIds = findWorkflowLauncherCallIds(contexts);
+  if (launcherCallIds.size === 0) {
+    return contexts;
+  }
+  const workflowsByLauncherCallId = new Map<
+    string,
+    EventProjectionWorkflowMessage[]
+  >();
+  const placed: SemanticMessageContext[] = [];
+  for (const context of contexts) {
+    const { message } = context;
+    if (
+      message.parentToolCallId !== undefined &&
+      launcherCallIds.has(message.parentToolCallId) &&
+      isLocalWorkflowMessage(message)
+    ) {
+      const workflows =
+        workflowsByLauncherCallId.get(message.parentToolCallId) ?? [];
+      workflows.push(message);
+      workflowsByLauncherCallId.set(message.parentToolCallId, workflows);
+      continue;
+    }
+    placed.push(context);
+  }
+  return placed.flatMap((context) => {
+    const launcher = context.message;
+    if (launcher.kind !== "tool-call") {
+      return [context];
+    }
+    const workflows = workflowsByLauncherCallId.get(launcher.callId) ?? [];
+    return [
+      context,
+      ...workflows.map((workflow) => ({
+        ...context,
+        message: withLauncherParent(workflow, launcher),
+      })),
+    ];
+  });
+}
+
 function isSameTurnEntry(
   left: SemanticMessageContext,
   right: SemanticMessageContext,
@@ -274,7 +373,8 @@ class SemanticProjectionBuilder {
   >();
   private readonly rootContexts: SemanticMessageContext[];
 
-  constructor(contexts: SemanticMessageContext[]) {
+  constructor(sourceContexts: SemanticMessageContext[]) {
+    const contexts = placeWorkflowsAfterLaunchers(sourceContexts);
     const referencedParentCallIds = new Set(
       contexts
         .map((context) => context.message.parentToolCallId)
