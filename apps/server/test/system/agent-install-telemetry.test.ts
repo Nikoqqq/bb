@@ -44,7 +44,7 @@ function capture(args: {
   return spy.mock.calls.map(([event]) => event);
 }
 
-describe("agent_install telemetry", () => {
+describe("agent install telemetry", () => {
   it("is off by default and sends nothing", () => {
     expect(defaultFeatureFlags.agentInstallTelemetry).toBe(false);
     expect(
@@ -69,12 +69,16 @@ describe("agent_install telemetry", () => {
       }),
     ).toEqual([
       {
-        name: "agent_install",
-        properties: { agent: "pi", method: "bundled-npm", outcome: "started" },
+        name: "agent_install_started",
+        properties: { provider: "pi", install_method: "bundled_npm" },
       },
       {
-        name: "agent_install",
-        properties: { agent: "pi", method: "bundled-npm", outcome: "failed" },
+        name: "agent_install_finished",
+        properties: {
+          provider: "pi",
+          install_method: "bundled_npm",
+          outcome: "failed",
+        },
       },
     ]);
     expect(
@@ -84,8 +88,12 @@ describe("agent_install telemetry", () => {
         events: installEvents("pi", "npm.cmd install -g pkg@latest", true),
       }),
     ).toContainEqual({
-      name: "agent_install",
-      properties: { agent: "pi", method: "npm", outcome: "succeeded" },
+      name: "agent_install_finished",
+      properties: {
+        provider: "pi",
+        install_method: "npm",
+        outcome: "succeeded",
+      },
     });
     expect(
       capture({
@@ -94,8 +102,12 @@ describe("agent_install telemetry", () => {
         events: installEvents("codex", "sh -c 'curl -fsSL x | sh'", true),
       }),
     ).toContainEqual({
-      name: "agent_install",
-      properties: { agent: "codex", method: "native", outcome: "succeeded" },
+      name: "agent_install_finished",
+      properties: {
+        provider: "codex",
+        install_method: "native",
+        outcome: "succeeded",
+      },
     });
   });
 

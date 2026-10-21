@@ -287,10 +287,11 @@ messages, or session ids. Sign-in `exited` means the command exited before
 readiness was observed, not that authentication succeeded; `new_thread_submit`
 `accepted` means the thread was created, not that the provider answered.
 `BB_FF_AGENT_INSTALL_TELEMETRY=true` (off by default) additionally sends
-`agent_install` when Setup installs a built-in agent: `agent` (its provider
-id, such as `claude-code`, `codex`, or `pi`; agents from other plugins are not
-reported), `method` (`native`, `bundled-npm`, or `npm`), and `outcome`
-(`started`, `succeeded`, or `failed`).
+`agent_install_started` and `agent_install_finished` when Setup installs a
+built-in agent. Both carry `provider` (its provider id, such as `claude-code`,
+`codex`, or `pi`; agents from other plugins are not reported) and
+`install_method` (`native`, `bundled_npm`, or `npm`); `agent_install_finished`
+also carries `outcome` (`succeeded` or `failed`).
 
 ## AI services
 

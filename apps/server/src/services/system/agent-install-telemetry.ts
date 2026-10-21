@@ -2,10 +2,10 @@ import type { FeatureFlags } from "@bb/domain";
 import type { ProviderCliInstallEvent } from "@bb/host-daemon-contract";
 import type { TelemetryService } from "./telemetry.js";
 
-type AgentInstallMethod = "native" | "bundled-npm" | "npm";
+type AgentInstallMethod = "native" | "bundled_npm" | "npm";
 
 function installMethod(displayCommand: string): AgentInstallMethod {
-  if (/npm-cli\.js/u.test(displayCommand)) return "bundled-npm";
+  if (/npm-cli\.js/u.test(displayCommand)) return "bundled_npm";
   return /^'?(?:[^'\s]*[\\/])?(?:npm|bun)(?:\.cmd|\.exe)?'?(?:\s|$)/iu.test(
     displayCommand,
   )
@@ -25,17 +25,23 @@ export function captureAgentInstallTelemetry(args: {
   if (args.actionKind !== "install" || !args.isBuiltinProvider()) return;
   const started = args.events.find((event) => event.type === "started");
   if (started === undefined) return;
-  const method = installMethod(started.command);
+  const installMethodValue = installMethod(started.command);
   const succeeded = args.events.some(
     (event) => event.type === "completed" && event.success,
   );
-  for (const outcome of [
-    "started",
-    succeeded ? "succeeded" : "failed",
-  ] as const) {
-    args.telemetry.capture({
-      name: "agent_install",
-      properties: { agent: args.providerId, method, outcome },
-    });
-  }
+  args.telemetry.capture({
+    name: "agent_install_started",
+    properties: {
+      provider: args.providerId,
+      install_method: installMethodValue,
+    },
+  });
+  args.telemetry.capture({
+    name: "agent_install_finished",
+    properties: {
+      provider: args.providerId,
+      install_method: installMethodValue,
+      outcome: succeeded ? "succeeded" : "failed",
+    },
+  });
 }

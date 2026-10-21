@@ -41,11 +41,18 @@ export type TelemetryEvent =
       };
     }
   | {
-      name: "agent_install";
+      name: "agent_install_started";
       properties: {
-        agent: string;
-        method: "native" | "bundled-npm" | "npm";
-        outcome: "started" | "succeeded" | "failed";
+        provider: string;
+        install_method: "native" | "bundled_npm" | "npm";
+      };
+    }
+  | {
+      name: "agent_install_finished";
+      properties: {
+        provider: string;
+        install_method: "native" | "bundled_npm" | "npm";
+        outcome: "succeeded" | "failed";
       };
     }
   | RecordTelemetryEventRequest;
