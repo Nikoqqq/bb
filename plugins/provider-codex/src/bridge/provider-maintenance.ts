@@ -1,5 +1,7 @@
+import path from "node:path";
 import {
   type ProviderHealthResult,
+  type ProviderInstallationCommand,
   type ProviderInstallationRunResult,
   type ProviderInstallationStatus,
   type ProviderUsage,
@@ -8,7 +10,6 @@ import {
   experimental_clampPercent as clampPercent,
   experimental_commandOutput as commandOutput,
   experimental_compareVersions as compareVersions,
-  experimental_downloadedInstallerCommand as downloadedInstallerCommand,
   experimental_formatCommand as formatCommand,
   experimental_installationVerification as installationVerification,
   experimental_npmGlobalInstallSource as npmGlobalInstallSource,
@@ -87,10 +88,35 @@ function codexUpdateCommand(): {
   };
 }
 
-function codexInstallerCommand() {
-  return downloadedInstallerCommand(CODEX_INSTALL_SCRIPT_URL, {
-    powershellUrl: CODEX_POWERSHELL_INSTALL_SCRIPT_URL,
-  });
+export function codexLoginCommand(
+  command: string,
+  args: readonly string[],
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const text = formatCommand(command, args);
+  return platform === "win32" && path.win32.isAbsolute(command)
+    ? `& ${text}`
+    : text;
+}
+
+export function codexInstallerCommand(
+  platform: NodeJS.Platform = process.platform,
+): ProviderInstallationCommand {
+  if (platform === "win32") {
+    const script = `$env:CODEX_NON_INTERACTIVE='1'; irm ${CODEX_POWERSHELL_INSTALL_SCRIPT_URL} | iex`;
+    return {
+      command: "powershell.exe",
+      args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script],
+      displayCommand: script,
+    };
+  }
+  const script = [
+    'tmp=$(mktemp "${TMPDIR:-/tmp}/provider-installation.XXXXXX")',
+    "trap 'rm -f \"$tmp\"' EXIT",
+    `curl -fsSL ${CODEX_INSTALL_SCRIPT_URL} -o "$tmp"`,
+    'CODEX_NON_INTERACTIVE=1 sh "$tmp"',
+  ].join(" && ");
+  return { command: "sh", args: ["-c", script], displayCommand: script };
 }
 
 export async function getCodexProviderInstallationStatus(
@@ -196,6 +222,7 @@ function healthResult(
     statusMessage?: string | null;
   } = {},
 ): ProviderHealthResult {
+  const command = resolveCodexCommand();
   return {
     supported: true,
     health: {
@@ -207,17 +234,18 @@ function healthResult(
       minimumSupportedVersion: CODEX_MINIMUM_SUPPORTED_VERSION,
       canInstall: true,
       canUpdate: status !== "not_installed",
-      loginCommand: "codex login --device-auth",
-      localLoginCommand: "codex login",
+      loginCommand: codexLoginCommand(command, ["login", "--device-auth"]),
+      localLoginCommand: codexLoginCommand(command, ["login"]),
     },
   };
 }
 
 export async function getCodexProviderHealth(): Promise<ProviderHealthResult> {
-  if ((await resolveExecutablePath("codex")) === null) {
+  const command = resolveCodexCommand();
+  if ((await resolveExecutablePath(command)) === null) {
     return healthResult("not_installed");
   }
-  const version = await readCliVersion("codex");
+  const version = await readCliVersion(command);
   if (
     version !== null &&
     compareVersions(version, CODEX_MINIMUM_SUPPORTED_VERSION) < 0
@@ -330,7 +358,7 @@ function normalizeUsage(raw: unknown, email: string | null): ProviderUsage {
 }
 
 export async function getCodexProviderUsage(): Promise<ProviderUsageResult> {
-  if ((await resolveExecutablePath("codex")) === null) {
+  if ((await resolveExecutablePath(resolveCodexCommand())) === null) {
     return { supported: true, usage: { status: "not_installed" } };
   }
   let credentials: CodexAuthCredentials | null;
