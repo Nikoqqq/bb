@@ -1821,6 +1821,18 @@ async function runEnvironmentProvisionCommand(
   if (args.request.command.setupScriptTimeoutMs !== null) {
     const environment = args.environment;
     const id = `environment:${environment.id}:${environment.environmentProviderInstanceKey}:setup`;
+    const existing = deps.db
+      .select({ finishedAt: environmentHookOperations.finishedAt })
+      .from(environmentHookOperations)
+      .where(eq(environmentHookOperations.id, id))
+      .get();
+    if (existing !== undefined && existing.finishedAt === null) {
+      interruptUnrecoverableEnvironmentProvisioning(deps, {
+        environmentId: environment.id,
+        reason: `An earlier setup has an unknown outcome. Archive its threads, inspect the workspace, then run bb environment cleanup ${environment.id} --recover.`,
+      });
+      return;
+    }
     deps.db
       .insert(environmentHookOperations)
       .values({
@@ -1831,7 +1843,10 @@ async function runEnvironmentProvisionCommand(
         kind: "setup",
         startedAt: Date.now(),
       })
-      .onConflictDoNothing()
+      .onConflictDoUpdate({
+        target: environmentHookOperations.id,
+        set: { startedAt: Date.now(), finishedAt: null, error: null },
+      })
       .run();
   }
   const execution = createLiveHostCommandExecution(args.environment.hostId);
