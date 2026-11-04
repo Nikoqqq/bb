@@ -811,7 +811,9 @@ export function createPiDeltaTranslator(
           });
         }
         if (lastAssistant && !piEvent.data.settlementOnly && !settlementError) {
-          const text = extractAssistantText(lastAssistant);
+          const text =
+            extractAssistantText(lastAssistant) ??
+            extractAssistantReasoningFallback(lastAssistant);
           if (text) {
             deltas.push({
               kind: "item.textClose",
@@ -1074,6 +1076,31 @@ function extractAssistantText(message: PiAssistantMessage): string | undefined {
     }
   }
   const text = chunks.join("\n").trim();
+  return text.length > 0 ? text : undefined;
+}
+
+const piThinkingBlockSchema = z
+  .object({
+    type: z.literal("thinking"),
+    thinking: z.string(),
+    redacted: z.boolean().optional(),
+  })
+  .passthrough();
+
+function extractAssistantReasoningFallback(
+  message: PiAssistantMessage,
+): string | undefined {
+  const chunks: string[] = [];
+  for (const block of message.content) {
+    if (block.type === "toolCall") {
+      return undefined;
+    }
+    const parsedBlock = piThinkingBlockSchema.safeParse(block);
+    if (parsedBlock.success && parsedBlock.data.redacted !== true) {
+      chunks.push(parsedBlock.data.thinking);
+    }
+  }
+  const text = chunks.join("\n\n").trim();
   return text.length > 0 ? text : undefined;
 }
 
