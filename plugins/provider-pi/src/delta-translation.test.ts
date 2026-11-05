@@ -293,6 +293,158 @@ describe("pi delta translation equivalence", () => {
     );
   });
 
+  describe("reasoning-only final answers", () => {
+    function agentEndWith(content: Array<Record<string, unknown>>) {
+      return {
+        type: "agent_end",
+        messages: [
+          {
+            role: "assistant",
+            content,
+            api: "openai-completions",
+            provider: "deepseek",
+            model: "deepseek-reasoner",
+            usage: {
+              input: 10,
+              output: 5,
+              cacheRead: 0,
+              cacheWrite: 0,
+              totalTokens: 15,
+              cost: {
+                input: 0,
+                output: 0,
+                cacheRead: 0,
+                cacheWrite: 0,
+                total: 0,
+              },
+            },
+            stopReason: "stop",
+            timestamp: 1777995781000,
+          },
+        ],
+        willRetry: false,
+      };
+    }
+
+    function agentMessages(events: ThreadEvent[]): string[] {
+      return events.flatMap((event) =>
+        event.type === "item/completed" && event.item.type === "agentMessage"
+          ? [event.item.text]
+          : [],
+      );
+    }
+
+    it("shows reasoning as the answer when content is empty", () => {
+      const harness = createHarness();
+      harness.translate(loadFixture("agent-start.json"));
+      const turnId = harness.openTurnId();
+
+      const events = harness.translate(
+        agentEndWith([
+          { type: "text", text: "  \n" },
+          { type: "thinking", thinking: "The answer is 42." },
+          { type: "thinking", thinking: "Because of reasons." },
+        ]),
+      );
+
+      expect(agentMessages(events)).toEqual([
+        "The answer is 42.\n\nBecause of reasons.",
+      ]);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "turn/completed",
+          scope: turnScope(turnId),
+          status: "completed",
+        }),
+      );
+    });
+
+    it("keeps the streamed reasoning item and adds the fallback answer", () => {
+      const harness = createHarness();
+      harness.translate(loadFixture("agent-start.json"));
+      harness.translate({
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "thinking_delta",
+          contentIndex: 0,
+          delta: "Only reasoning.",
+        },
+      } as AgentSessionEvent);
+      const reasoningEvents = harness.translate({
+        type: "message_update",
+        assistantMessageEvent: {
+          type: "thinking_end",
+          contentIndex: 0,
+          content: "Only reasoning.",
+        },
+      } as AgentSessionEvent);
+
+      const events = harness.translate(
+        agentEndWith([{ type: "thinking", thinking: "Only reasoning." }]),
+      );
+
+      expect(reasoningEvents).toContainEqual(
+        expect.objectContaining({
+          type: "item/completed",
+          item: expect.objectContaining({ type: "reasoning" }),
+        }),
+      );
+      expect(agentMessages(events)).toEqual(["Only reasoning."]);
+    });
+
+    it("leaves a normal text answer untouched", () => {
+      const harness = createHarness();
+      harness.translate(loadFixture("agent-start.json"));
+
+      const events = harness.translate(
+        agentEndWith([
+          { type: "thinking", thinking: "Hidden chain of thought." },
+          { type: "text", text: "Visible answer." },
+        ]),
+      );
+
+      expect(agentMessages(events)).toEqual(["Visible answer."]);
+    });
+
+    it("emits no answer when content and reasoning are both empty", () => {
+      const harness = createHarness();
+      harness.translate(loadFixture("agent-start.json"));
+
+      const events = harness.translate(
+        agentEndWith([
+          { type: "text", text: "" },
+          { type: "thinking", thinking: " \n " },
+        ]),
+      );
+
+      expect(agentMessages(events)).toEqual([]);
+      expect(events).toContainEqual(
+        expect.objectContaining({ type: "turn/completed", status: "completed" }),
+      );
+    });
+
+    it("does not promote redacted thinking or tool-call messages", () => {
+      const harness = createHarness();
+      harness.translate(loadFixture("agent-start.json"));
+
+      const redacted = harness.translate(
+        agentEndWith([
+          { type: "thinking", thinking: "opaque", redacted: true },
+        ]),
+      );
+      harness.translate(loadFixture("agent-start.json"));
+      const withToolCall = harness.translate(
+        agentEndWith([
+          { type: "thinking", thinking: "Call the tool." },
+          { type: "toolCall", id: "call-1", name: "read", arguments: {} },
+        ]),
+      );
+
+      expect(agentMessages(redacted)).toEqual([]);
+      expect(agentMessages(withToolCall)).toEqual([]);
+    });
+  });
+
   it("records a displayed Pi custom message as the input of the turn it triggered", () => {
     const harness = createHarness();
     harness.translate(sdkMessage(loadFixture("agent-start.json")));
